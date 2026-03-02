@@ -57,6 +57,7 @@ type ComputeInstanceReconciler struct {
 	Scheme                   *runtime.Scheme
 	mgr                      mcmanager.Manager
 	ComputeInstanceNamespace string
+	TenantNamespace          string
 	ProvisioningProvider     provisioning.ProvisioningProvider
 	// StatusPollInterval defines how often to check provisioning job status
 	StatusPollInterval time.Duration
@@ -68,6 +69,7 @@ type ComputeInstanceReconciler struct {
 func NewComputeInstanceReconciler(
 	mgr mcmanager.Manager,
 	computeInstanceNamespace string,
+	tenantNamespace string,
 	provisioningProvider provisioning.ProvisioningProvider,
 	statusPollInterval time.Duration,
 	maxJobHistory int,
@@ -91,6 +93,7 @@ func NewComputeInstanceReconciler(
 		Scheme:                   mgr.GetLocalManager().GetScheme(),
 		mgr:                      mgr,
 		ComputeInstanceNamespace: computeInstanceNamespace,
+		TenantNamespace:          tenantNamespace,
 		ProvisioningProvider:     provisioningProvider,
 		StatusPollInterval:       statusPollInterval,
 		MaxJobHistory:            maxJobHistory,
@@ -236,9 +239,7 @@ func (r *ComputeInstanceReconciler) SetupWithManager(mgr mcmanager.Manager) erro
 		).
 		Watches(
 			&v1alpha1.Tenant{},
-			mchandler.EnqueueRequestForOwner(
-				&v1alpha1.ComputeInstance{},
-			),
+			mchandler.EnqueueRequestsFromMapFunc(r.mapTenantToComputeInstances),
 			mcbuilder.WithPredicates(ComputeInstanceNamespacePredicate(r.ComputeInstanceNamespace)),
 			mcbuilder.WithEngageWithLocalCluster(true),
 			mcbuilder.WithEngageWithProviderClusters(false),
@@ -287,6 +288,29 @@ func (r *ComputeInstanceReconciler) mapObjectToComputeInstance(ctx context.Conte
 			NamespacedName: key,
 		},
 	}
+}
+
+func (r *ComputeInstanceReconciler) mapTenantToComputeInstances(ctx context.Context, obj client.Object) []reconcile.Request {
+	// Get all compute instances matching the tenant reference
+	computeInstances := &v1alpha1.ComputeInstanceList{}
+	err := r.List(ctx,
+		computeInstances,
+		client.InNamespace(r.TenantNamespace),
+		client.MatchingFields{osacTenantAnnotation: obj.GetName()})
+	if err != nil {
+		return nil
+	}
+
+	requests := []reconcile.Request{}
+	for _, computeInstance := range computeInstances.Items {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKey{
+				Namespace: computeInstance.GetNamespace(),
+				Name:      computeInstance.GetName(),
+			},
+		})
+	}
+	return requests
 }
 
 // handleProvisioning manages the provisioning job lifecycle for a ComputeInstance.
@@ -562,25 +586,9 @@ func (r *ComputeInstanceReconciler) handleUpdate(ctx context.Context, _ reconcil
 	// Get the tenant (on local cluster)
 	tenant, err := r.getTenant(ctx, instance)
 	if err != nil {
+		tenantName := instance.GetAnnotations()[osacTenantAnnotation]
+		log.Info("tenant does not exist or is being deleted, requeueing", "tenant", tenantName)
 		return ctrl.Result{}, err
-	}
-
-	// If the tenant is being deleted, wait for deletion to complete before creating a new one.
-	// This can happen when a previous ComputeInstance owned the tenant via ownerReference
-	// and its deletion triggered garbage collection on the shared tenant.
-	if tenant != nil && tenant.DeletionTimestamp != nil {
-		log.Info("tenant is being deleted, waiting for deletion to complete", "tenant", tenant.GetName())
-		instance.SetTenantReferenceName("")
-		instance.SetTenantReferenceNamespace("")
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-	}
-
-	// If the tenant doesn't exist, create it and requeue
-	if tenant == nil {
-		if err := r.createOrUpdateTenant(ctx, instance); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
 	// If the tenant is not ready, requeue
