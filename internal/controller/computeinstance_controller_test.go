@@ -49,9 +49,7 @@ func createReadyTenant(ctx context.Context, namespace, name string) {
 				Name:      name,
 				Namespace: namespace,
 			},
-			Spec: osacv1alpha1.TenantSpec{
-				Name: name,
-			},
+			Spec: osacv1alpha1.TenantSpec{},
 		}
 		Expect(k8sClient.Create(ctx, tenant)).To(Succeed())
 	}
@@ -92,9 +90,7 @@ var _ = Describe("ComputeInstance Controller", func() {
 					Name:      tenantName,
 					Namespace: namespaceName,
 				},
-				Spec: osacv1alpha1.TenantSpec{
-					Name: tenantName,
-				},
+				Spec: osacv1alpha1.TenantSpec{},
 			}
 			err := k8sClient.Get(ctx, types.NamespacedName{Name: tenantName, Namespace: namespaceName}, &osacv1alpha1.Tenant{})
 			if err != nil && errors.IsNotFound(err) {
@@ -1057,15 +1053,11 @@ var _ = Describe("ComputeInstance Controller", func() {
 			}
 		}
 
-		deleteTenant := func(name string) {
-			deleteTenantInNamespace(ctx, namespaceName, name)
-		}
-
 		It("should requeue when tenant has DeletionTimestamp", func() {
 			const resourceName = "test-tenant-gc-clear"
 			const tenantName = "tenant-gc-clear"
 			defer deleteCI(resourceName)
-			defer deleteTenant(tenantName)
+			defer deleteTenantInNamespace(ctx, namespaceName, tenantName)
 
 			createReadyTenant(ctx, namespaceName, tenantName)
 
@@ -1132,6 +1124,8 @@ var _ = Describe("ComputeInstance Controller", func() {
 			defer deleteCI(resourceName)
 
 			nn := types.NamespacedName{Name: resourceName, Namespace: namespaceName}
+
+			// Create a ComputeInstance that references a tenant that does not exist
 			resource := &osacv1alpha1.ComputeInstance{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
