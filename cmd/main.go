@@ -82,6 +82,7 @@ const (
 	envAAPProvisionTemplate   = "OSAC_AAP_PROVISION_TEMPLATE"
 	envAAPDeprovisionTemplate = "OSAC_AAP_DEPROVISION_TEMPLATE"
 	envAAPStatusPollInterval  = "OSAC_AAP_STATUS_POLL_INTERVAL"
+	envAAPInsecureSkipVerify  = "OSAC_AAP_INSECURE_SKIP_VERIFY"
 
 	// Job history configuration
 	envMaxJobHistory = "OSAC_MAX_JOB_HISTORY"
@@ -116,6 +117,22 @@ func parsePollInterval(envVar string, defaultInterval time.Duration) time.Durati
 	}
 
 	return interval
+}
+
+// parseBoolEnv parses a boolean from environment variable with fallback to default.
+// It accepts "1", "t", "T", "true", "TRUE", "True" as true and "0", "f", "F", "false", "FALSE", "False" as false.
+func parseBoolEnv(envVar string, defaultValue bool) bool {
+	valueStr := os.Getenv(envVar)
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := strconv.ParseBool(valueStr)
+	if err != nil {
+		setupLog.Error(err, "invalid boolean value, using default",
+			"envVar", envVar, "value", valueStr, "default", defaultValue)
+		return defaultValue
+	}
+	return value
 }
 
 // parseIntEnv parses an integer from environment variable with fallback to default.
@@ -226,10 +243,11 @@ func createEDAProvider(
 // createAAPProvider creates and validates AAP direct provider configuration.
 func createAAPProvider(
 	aapURL, aapToken, provisionTemplate, deprovisionTemplate string,
+	aapInsecureSkipVerify bool,
 ) (provisioning.ProvisioningProvider, time.Duration, error) {
 	statusPollInterval := parsePollInterval(envAAPStatusPollInterval, provisioning.DefaultStatusPollInterval)
 
-	aapClient := aap.NewClient(aapURL, aapToken)
+	aapClient := aap.NewClient(aapURL, aapToken, aapInsecureSkipVerify)
 	config := provisioning.ProviderConfig{
 		ProviderType:        provisioning.ProviderTypeAAP,
 		AAPClient:           aapClient,
@@ -246,7 +264,8 @@ func createAAPProvider(
 		"url", aapURL,
 		"provisionTemplate", provisionTemplate,
 		"deprovisionTemplate", deprovisionTemplate,
-		"statusPollInterval", statusPollInterval)
+		"statusPollInterval", statusPollInterval,
+		"insecureSkipVerify", aapInsecureSkipVerify)
 
 	return provider, statusPollInterval, nil
 }
@@ -256,6 +275,7 @@ func createProvider(
 	providerType provisioning.ProviderType,
 	provisionWebhook, deprovisionWebhook string,
 	aapURL, aapToken, provisionTemplate, deprovisionTemplate string,
+	aapInsecureSkipVerify bool,
 	minimumRequestInterval time.Duration,
 ) (provisioning.ProvisioningProvider, time.Duration, error) {
 	switch providerType {
@@ -263,7 +283,7 @@ func createProvider(
 		return createEDAProvider(provisionWebhook, deprovisionWebhook, minimumRequestInterval)
 
 	case provisioning.ProviderTypeAAP:
-		return createAAPProvider(aapURL, aapToken, provisionTemplate, deprovisionTemplate)
+		return createAAPProvider(aapURL, aapToken, provisionTemplate, deprovisionTemplate, aapInsecureSkipVerify)
 
 	default:
 		return nil, 0, fmt.Errorf("unknown provider type: %s", providerType)
@@ -349,6 +369,7 @@ func setupComputeInstanceControllers(
 	aapToken := os.Getenv(envAAPToken)
 	provisionTemplate := os.Getenv(envAAPProvisionTemplate)
 	deprovisionTemplate := os.Getenv(envAAPDeprovisionTemplate)
+	aapInsecureSkipVerify := parseBoolEnv(envAAPInsecureSkipVerify, false)
 	providerType := provisioning.ProviderType(providerTypeStr)
 	if providerType == "" {
 		providerType = provisioning.ProviderTypeEDA
@@ -357,6 +378,7 @@ func setupComputeInstanceControllers(
 		providerType,
 		provisionWebhook, deprovisionWebhook,
 		aapURL, aapToken, provisionTemplate, deprovisionTemplate,
+		aapInsecureSkipVerify,
 		minimumRequestInterval,
 	)
 	if err != nil {
