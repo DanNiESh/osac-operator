@@ -29,8 +29,7 @@ import (
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 
 	ckv1alpha1 "github.com/osac-project/osac-operator/api/v1alpha1"
-	privatev1 "github.com/osac-project/osac-operator/internal/api/private/v1"
-	sharedv1 "github.com/osac-project/osac-operator/internal/api/shared/v1"
+	privatev1 "github.com/osac-project/osac-operator/internal/api/osac/private/v1"
 )
 
 // ComputeInstanceFeedbackReconciler sends updates to the fulfillment service.
@@ -324,14 +323,14 @@ func (t *computeInstanceFeedbackReconcilerTask) syncVMConditionFromCR(vmConditio
 	}
 }
 
-func (t *computeInstanceFeedbackReconcilerTask) mapConditionStatus(status metav1.ConditionStatus) sharedv1.ConditionStatus {
+func (t *computeInstanceFeedbackReconcilerTask) mapConditionStatus(status metav1.ConditionStatus) privatev1.ConditionStatus {
 	switch status {
 	case metav1.ConditionFalse:
-		return sharedv1.ConditionStatus_CONDITION_STATUS_FALSE
+		return privatev1.ConditionStatus_CONDITION_STATUS_FALSE
 	case metav1.ConditionTrue:
-		return sharedv1.ConditionStatus_CONDITION_STATUS_TRUE
+		return privatev1.ConditionStatus_CONDITION_STATUS_TRUE
 	default:
-		return sharedv1.ConditionStatus_CONDITION_STATUS_UNSPECIFIED
+		return privatev1.ConditionStatus_CONDITION_STATUS_UNSPECIFIED
 	}
 }
 
@@ -400,7 +399,7 @@ func (t *computeInstanceFeedbackReconcilerTask) findComputeInstanceCondition(kin
 	if condition == nil {
 		condition = &privatev1.ComputeInstanceCondition{
 			Type:   kind,
-			Status: sharedv1.ConditionStatus_CONDITION_STATUS_FALSE,
+			Status: privatev1.ConditionStatus_CONDITION_STATUS_FALSE,
 		}
 		t.ci.Status.Conditions = append(t.ci.Status.Conditions, condition)
 	}

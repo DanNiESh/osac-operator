@@ -24,8 +24,7 @@ managed:
 
 inputs:
 
-- module: buf.build/osac-project/fulfillment-api:v0.0.34
-- module: buf.build/osac-project/private-api:v0.0.44
+- module: buf.build/osac-project/private-api:v0.0.45
 
 plugins:
 

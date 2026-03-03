@@ -32,8 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	osacv1alpha1 "github.com/osac-project/osac-operator/api/v1alpha1"
-	privatev1 "github.com/osac-project/osac-operator/internal/api/private/v1"
-	sharedv1 "github.com/osac-project/osac-operator/internal/api/shared/v1"
+	privatev1 "github.com/osac-project/osac-operator/internal/api/osac/private/v1"
 )
 
 // mockComputeInstancesClient is a mock implementation of ComputeInstancesClient for testing.
@@ -531,7 +530,7 @@ var _ = Describe("ComputeInstanceFeedbackReconciler", func() {
 			found := false
 			for _, cond := range vm.GetStatus().GetConditions() {
 				if cond.GetType() == privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_CONFIGURATION_APPLIED {
-					Expect(cond.GetStatus()).To(Equal(sharedv1.ConditionStatus_CONDITION_STATUS_FALSE))
+					Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_FALSE))
 					Expect(cond.GetMessage()).To(Equal("Applying configuration"))
 					found = true
 					break
@@ -683,7 +682,7 @@ var _ = Describe("ComputeInstanceFeedbackReconciler", func() {
 			found := false
 			for _, cond := range mockClient.lastUpdate.GetStatus().GetConditions() {
 				if cond.GetType() == privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_RESTART_IN_PROGRESS {
-					Expect(cond.GetStatus()).To(Equal(sharedv1.ConditionStatus_CONDITION_STATUS_TRUE))
+					Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_TRUE))
 					Expect(cond.GetMessage()).To(Equal(restartInProgressMessage))
 					found = true
 					break
@@ -718,7 +717,7 @@ var _ = Describe("ComputeInstanceFeedbackReconciler", func() {
 			found := false
 			for _, cond := range mockClient.lastUpdate.GetStatus().GetConditions() {
 				if cond.GetType() == privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_RESTART_FAILED {
-					Expect(cond.GetStatus()).To(Equal(sharedv1.ConditionStatus_CONDITION_STATUS_TRUE))
+					Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_TRUE))
 					Expect(cond.GetMessage()).To(Equal(restartFailedMessage))
 					found = true
 					break
@@ -781,7 +780,7 @@ var _ = Describe("ComputeInstanceFeedbackReconciler", func() {
 			found := false
 			for _, cond := range mockClient.lastUpdate.GetStatus().GetConditions() {
 				if cond.GetType() == privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_PROVISIONED {
-					Expect(cond.GetStatus()).To(Equal(sharedv1.ConditionStatus_CONDITION_STATUS_TRUE))
+					Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_TRUE))
 					found = true
 					break
 				}
@@ -808,7 +807,7 @@ var _ = Describe("ComputeInstanceFeedbackReconciler", func() {
 			found := false
 			for _, cond := range mockClient.lastUpdate.GetStatus().GetConditions() {
 				if cond.GetType() == privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_PROVISIONED {
-					Expect(cond.GetStatus()).To(Equal(sharedv1.ConditionStatus_CONDITION_STATUS_FALSE))
+					Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_FALSE))
 					Expect(cond.GetMessage()).To(Equal("Provisioning infrastructure resources"))
 					found = true
 					break
@@ -835,7 +834,7 @@ var _ = Describe("ComputeInstanceFeedbackReconciler", func() {
 			found := false
 			for _, cond := range mockClient.lastUpdate.GetStatus().GetConditions() {
 				if cond.GetType() == privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_RESTART_REQUIRED {
-					Expect(cond.GetStatus()).To(Equal(sharedv1.ConditionStatus_CONDITION_STATUS_TRUE))
+					Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_TRUE))
 					found = true
 					break
 				}
@@ -861,7 +860,7 @@ var _ = Describe("ComputeInstanceFeedbackReconciler", func() {
 			found := false
 			for _, cond := range mockClient.lastUpdate.GetStatus().GetConditions() {
 				if cond.GetType() == privatev1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_RESTART_REQUIRED {
-					Expect(cond.GetStatus()).To(Equal(sharedv1.ConditionStatus_CONDITION_STATUS_FALSE))
+					Expect(cond.GetStatus()).To(Equal(privatev1.ConditionStatus_CONDITION_STATUS_FALSE))
 					found = true
 					break
 				}
