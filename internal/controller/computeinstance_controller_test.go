@@ -913,8 +913,8 @@ var _ = Describe("ComputeInstance Controller", func() {
 				Expect(action).To(Equal(provisionPoll))
 				Expect(job).NotTo(BeNil())
 				Expect(job.JobID).To(Equal("running-job"))
-				// Verify the stale instance's jobs were updated from the API server
-				Expect(staleInstance.Status.Jobs).To(HaveLen(1))
+				// Verify the stale instance's jobs were NOT mutated
+				Expect(staleInstance.Status.Jobs).To(BeEmpty())
 			})
 
 			It("should poll when API server has non-terminal job but cache shows terminal job with version mismatch", func() {
@@ -961,8 +961,8 @@ var _ = Describe("ComputeInstance Controller", func() {
 				Expect(action).To(Equal(provisionPoll))
 				Expect(job).NotTo(BeNil())
 				Expect(job.JobID).To(Equal("new-running-job"))
-				// Verify the stale instance's jobs were updated from the API server
-				Expect(staleInstance.Status.Jobs).To(HaveLen(2))
+				// Verify the stale instance's jobs were NOT mutated
+				Expect(staleInstance.Status.Jobs).To(HaveLen(1))
 			})
 
 			It("should trigger when API server also shows no non-terminal job", func() {

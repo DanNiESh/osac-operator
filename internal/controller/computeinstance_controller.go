@@ -988,7 +988,6 @@ func (r *ComputeInstanceReconciler) checkAPIServerForNonTerminalJob(ctx context.
 	freshJob := v1alpha1.FindLatestJobByType(fresh.Status.Jobs, v1alpha1.JobTypeProvision)
 	if freshJob != nil && freshJob.JobID != "" && !freshJob.State.IsTerminal() {
 		log.Info("skipping provision trigger: non-terminal job found via API server", "jobID", freshJob.JobID, "state", freshJob.State)
-		instance.Status.Jobs = fresh.Status.Jobs
 		return freshJob, true
 	}
 	return nil, false
