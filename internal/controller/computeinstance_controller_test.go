@@ -876,7 +876,7 @@ var _ = Describe("ComputeInstance Controller", func() {
 				Expect(job).NotTo(BeNil())
 			})
 
-			It("should poll when API server has non-terminal job but cache shows none", func() {
+			It("should requeue when API server has non-terminal job but cache shows none", func() {
 				// Create instance in API server with a running provision job
 				instanceName := "test-api-server-check-no-cache"
 				apiInstance := &osacv1alpha1.ComputeInstance{
@@ -910,14 +910,11 @@ var _ = Describe("ComputeInstance Controller", func() {
 				}
 
 				action, job := reconciler.shouldTriggerProvision(ctx, staleInstance)
-				Expect(action).To(Equal(provisionPoll))
-				Expect(job).NotTo(BeNil())
-				Expect(job.JobID).To(Equal("running-job"))
-				// Verify the stale instance's jobs were NOT mutated
-				Expect(staleInstance.Status.Jobs).To(BeEmpty())
+				Expect(action).To(Equal(provisionRequeue))
+				Expect(job).To(BeNil())
 			})
 
-			It("should poll when API server has non-terminal job but cache shows terminal job with version mismatch", func() {
+			It("should requeue when API server has non-terminal job but cache shows terminal job with version mismatch", func() {
 				// Create instance in API server with a running provision job (newer than the terminal one)
 				instanceName := "test-api-server-check-stale-terminal"
 				apiInstance := &osacv1alpha1.ComputeInstance{
@@ -958,11 +955,8 @@ var _ = Describe("ComputeInstance Controller", func() {
 				}
 
 				action, job := reconciler.shouldTriggerProvision(ctx, staleInstance)
-				Expect(action).To(Equal(provisionPoll))
-				Expect(job).NotTo(BeNil())
-				Expect(job.JobID).To(Equal("new-running-job"))
-				// Verify the stale instance's jobs were NOT mutated
-				Expect(staleInstance.Status.Jobs).To(HaveLen(1))
+				Expect(action).To(Equal(provisionRequeue))
+				Expect(job).To(BeNil())
 			})
 
 			It("should trigger when API server also shows no non-terminal job", func() {

@@ -368,6 +368,8 @@ func (r *ComputeInstanceReconciler) handleProvisioning(ctx context.Context, inst
 		return ctrl.Result{}, nil
 	case provisionTrigger:
 		return r.triggerProvisionJob(ctx, instance)
+	case provisionRequeue:
+		return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
 	default: // provisionPoll
 		return r.pollProvisionJob(ctx, instance, latestProvisionJob)
 	}
@@ -416,12 +418,6 @@ func (r *ComputeInstanceReconciler) triggerProvisionJob(ctx context.Context, ins
 // pollProvisionJob checks the status of an existing provision job and updates the instance accordingly.
 func (r *ComputeInstanceReconciler) pollProvisionJob(ctx context.Context, instance *v1alpha1.ComputeInstance, latestProvisionJob *v1alpha1.JobStatus) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
-
-	// If the job isn't in the instance's job list (stale cache), requeue to let the cache refresh.
-	if findJobByID(instance.Status.Jobs, latestProvisionJob.JobID) == nil {
-		log.Info("provision job not found in cached status, requeueing", "jobID", latestProvisionJob.JobID)
-		return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
-	}
 
 	status, err := r.ProvisioningProvider.GetProvisionStatus(ctx, instance, latestProvisionJob.JobID)
 	if err != nil {
@@ -957,13 +953,14 @@ const (
 	provisionSkip    provisionAction = iota // nothing to do
 	provisionTrigger                        // trigger a new provision job
 	provisionPoll                           // poll an existing non-terminal job
+	provisionRequeue                        // stale cache detected, requeue to refresh
 )
 
 // shouldTriggerProvision determines the next provisioning action.
 // Returns provisionPoll with the in-progress job when one is already running.
 // Returns provisionSkip when config versions match (no change needed).
-// Returns provisionTrigger when provisioning is needed, after checking the API server
-// to guard against stale informer cache reads between back-to-back reconciles.
+// Returns provisionRequeue when the API server has a non-terminal job that the cache missed (stale cache).
+// Returns provisionTrigger when provisioning is needed and no in-flight job exists.
 func (r *ComputeInstanceReconciler) shouldTriggerProvision(ctx context.Context, instance *v1alpha1.ComputeInstance) (provisionAction, *v1alpha1.JobStatus) {
 	latestJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
 
@@ -976,8 +973,8 @@ func (r *ComputeInstanceReconciler) shouldTriggerProvision(ctx context.Context, 
 	// Provision is needed (no job, or spec changed since last terminal job).
 	// Check the API server to guard against stale informer cache: a prior
 	// reconcile may have already triggered a job that the cache hasn't picked up.
-	if freshJob, ok := r.checkAPIServerForNonTerminalJob(ctx, instance); ok {
-		return provisionPoll, freshJob
+	if _, ok := r.checkAPIServerForNonTerminalJob(ctx, instance); ok {
+		return provisionRequeue, nil
 	}
 	return provisionTrigger, latestJob
 }

@@ -174,23 +174,6 @@ var _ = Describe("ComputeInstance Provisioning", func() {
 			Expect(latestProvisionJob.Message).To(ContainSubstring("Failed to trigger provisioning"))
 		})
 
-		It("should requeue when poll job is not in cached status", func() {
-			// Simulate the stale-cache scenario: pollProvisionJob receives a fresh job
-			// from the API server that isn't in the instance's cached jobs list.
-			freshJob := &osacv1alpha1.JobStatus{
-				JobID:     "fresh-job-from-api",
-				Type:      osacv1alpha1.JobTypeProvision,
-				Timestamp: metav1.NewTime(time.Now().UTC()),
-				State:     osacv1alpha1.JobStateRunning,
-			}
-
-			result, err := reconciler.pollProvisionJob(ctx, instance, freshJob)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(reconciler.StatusPollInterval))
-			// Verify no jobs were added to the instance
-			Expect(instance.Status.Jobs).To(BeEmpty())
-		})
-
 		It("should poll for status when job ID exists and job is running", func() {
 			instance.Status.Jobs = []osacv1alpha1.JobStatus{
 				{
