@@ -81,8 +81,8 @@ func (p *AAPProvider) resolveTemplateName(action string, resource client.Object)
 	return "", fmt.Errorf("%s template not configured", action)
 }
 
-// getJobsFromResource extracts the jobs array from any supported resource type.
-func getJobsFromResource(resource client.Object) ([]v1alpha1.JobStatus, error) {
+// GetJobsFromResource extracts the jobs array from any supported resource type.
+func GetJobsFromResource(resource client.Object) ([]v1alpha1.JobStatus, error) {
 	switch r := resource.(type) {
 	case *v1alpha1.ComputeInstance:
 		return r.Status.Jobs, nil
@@ -240,7 +240,7 @@ func (p *AAPProvider) isReadyForDeprovision(ctx context.Context, resource client
 	log := ctrllog.FromContext(ctx)
 
 	// Get jobs from resource
-	jobs, err := getJobsFromResource(resource)
+	jobs, err := GetJobsFromResource(resource)
 	if err != nil {
 		return false, nil, err
 	}
