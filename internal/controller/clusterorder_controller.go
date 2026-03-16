@@ -560,13 +560,15 @@ func (r *ClusterOrderReconciler) triggerProvisionJob(ctx context.Context, instan
 	}
 
 	instance.Status.Jobs = helpers.AppendJob(instance.Status.Jobs, v1alpha1.JobStatus{
-		JobID:     result.JobID,
-		Type:      v1alpha1.JobTypeProvision,
-		State:     result.InitialState,
-		Message:   result.Message,
-		Timestamp: metav1.NewTime(time.Now().UTC()),
+		JobID:         result.JobID,
+		Type:          v1alpha1.JobTypeProvision,
+		State:         result.InitialState,
+		Message:       result.Message,
+		Timestamp:     metav1.NewTime(time.Now().UTC()),
+		ConfigVersion: instance.Status.DesiredConfigVersion,
 	}, r.MaxJobHistory)
-	log.Info("provision job triggered", "jobID", result.JobID)
+	latestJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
+	log.Info("provision job triggered", "jobID", latestJob.JobID, "configVersion", latestJob.ConfigVersion)
 	return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
 }
 

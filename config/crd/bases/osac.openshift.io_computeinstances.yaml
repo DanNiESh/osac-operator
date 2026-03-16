@@ -285,6 +285,13 @@ spec:
                         AAP Direct sets this to true to prevent orphaned cloud resources
                         EDA sets this to false as webhook handles cleanup
                       type: boolean
+                    configVersion:
+                      description: |-
+                        ConfigVersion is the DesiredConfigVersion at the time this job was triggered.
+                        Used to determine retry behavior on failure: if ConfigVersion differs from
+                        the current DesiredConfigVersion, a new job is triggered immediately.
+                        If they match, the controller retries with exponential backoff.
+                      type: string
                     jobID:
                       description: |-
                         JobID is the job identifier from the provisioning provider

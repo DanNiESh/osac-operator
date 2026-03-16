@@ -101,6 +101,7 @@ var _ = Describe("ClusterOrder Integration Tests", func() {
 			Expect(job).NotTo(BeNil())
 			Expect(job.JobID).To(Equal("prov-job-" + name))
 			Expect(job.State).To(Equal(osacv1alpha1.JobStatePending))
+			Expect(job.ConfigVersion).To(Equal("v1"), "job should record the DesiredConfigVersion it was triggered for")
 
 			// Simulate running
 			provider.setProvisionJobState(osacv1alpha1.JobStateRunning, "Running")

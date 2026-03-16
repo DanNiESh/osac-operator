@@ -102,6 +102,7 @@ var _ = Describe("HostPool Integration Tests", func() {
 			job := osacv1alpha1.FindLatestJobByType(instance.Status.Jobs, osacv1alpha1.JobTypeProvision)
 			Expect(job).NotTo(BeNil())
 			Expect(job.State).To(Equal(osacv1alpha1.JobStatePending))
+			Expect(job.ConfigVersion).To(Equal("v1"), "job should record the DesiredConfigVersion it was triggered for")
 
 			// Running
 			provider.setProvisionJobState(osacv1alpha1.JobStateRunning, "Running")

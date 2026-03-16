@@ -77,6 +77,7 @@ var _ = Describe("ClusterOrder Controller", func() {
 				apiReader:            k8sClient,
 				Scheme:               k8sClient.Scheme(),
 				ProvisioningProvider: provisioning.NewEDAProvider(noopWebhookClient, "http://noop-create", "http://noop-delete"),
+				MaxJobHistory:        DefaultMaxJobHistory,
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
