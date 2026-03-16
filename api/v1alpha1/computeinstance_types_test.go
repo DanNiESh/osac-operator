@@ -28,8 +28,7 @@ var _ = Describe("ComputeInstanceSpec", func() {
 				Cores:     4,
 				MemoryGiB: 8,
 				BootDisk: v1alpha1.DiskSpec{
-					SizeGiB:      30,
-					StorageClass: "standard",
+					SizeGiB: 30,
 				},
 				RunStrategy: v1alpha1.RunStrategyAlways,
 			}
@@ -73,8 +72,8 @@ var _ = Describe("ComputeInstanceSpec", func() {
 				MemoryGiB: 4,
 				BootDisk:  v1alpha1.DiskSpec{SizeGiB: 10},
 				AdditionalDisks: []v1alpha1.DiskSpec{
-					{SizeGiB: 50, StorageClass: "fast"},
-					{SizeGiB: 100, StorageClass: "standard"},
+					{SizeGiB: 50},
+					{SizeGiB: 100},
 					{SizeGiB: 200},
 				},
 				RunStrategy: v1alpha1.RunStrategyAlways,
@@ -82,8 +81,8 @@ var _ = Describe("ComputeInstanceSpec", func() {
 
 			Expect(spec.AdditionalDisks).To(HaveLen(3))
 			Expect(spec.AdditionalDisks[0].SizeGiB).To(Equal(int32(50)))
-			Expect(spec.AdditionalDisks[0].StorageClass).To(Equal("fast"))
-			Expect(spec.AdditionalDisks[2].StorageClass).To(BeEmpty())
+			Expect(spec.AdditionalDisks[1].SizeGiB).To(Equal(int32(100)))
+			Expect(spec.AdditionalDisks[2].SizeGiB).To(Equal(int32(200)))
 		})
 
 		It("should support user data secret reference", func() {

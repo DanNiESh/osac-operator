@@ -70,11 +70,6 @@ spec:
                       format: int32
                       minimum: 1
                       type: integer
-                    storageClass:
-                      description: |-
-                        StorageClass is the Kubernetes storage class to use for this disk
-                        If not specified, the tenant's StorageClass (labeled osac.openshift.io/tenant=<tenant>) is used
-                      type: string
                   required:
                   - sizeGiB
                   type: object
@@ -90,11 +85,6 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
-                  storageClass:
-                    description: |-
-                      StorageClass is the Kubernetes storage class to use for this disk
-                      If not specified, the tenant's StorageClass (labeled osac.openshift.io/tenant=<tenant>) is used
-                    type: string
                 required:
                 - sizeGiB
                 type: object
