@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/osac-project/osac-operator/api/v1alpha1"
+	"github.com/osac-project/osac-operator/internal/provisioning"
 )
 
 var _ = Describe("HostPool Controller", func() {
@@ -79,9 +80,12 @@ var _ = Describe("HostPool Controller", func() {
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
+			noopWebhookClient := &noopWebhookClientForTest{}
 			controllerReconciler := &HostPoolReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:               k8sClient,
+				apiReader:            k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				ProvisioningProvider: provisioning.NewEDAProvider(noopWebhookClient, "http://noop-create", "http://noop-delete"),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -90,6 +94,69 @@ var _ = Describe("HostPool Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
+		})
+	})
+
+	Context("handleProvisioning", func() {
+		var reconciler *HostPoolReconciler
+
+		BeforeEach(func() {
+			reconciler = &HostPoolReconciler{
+				Client:               k8sClient,
+				apiReader:            k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				ProvisioningProvider: &mockProvisioningProvider{},
+			}
+		})
+
+		ctx := context.Background()
+
+		It("should skip provisioning when ManagementStateManual annotation is set", func() {
+			instance := &v1alpha1.HostPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						osacHostPoolManagementStateAnnotation: ManagementStateManual,
+					},
+				},
+				Status: v1alpha1.HostPoolStatus{DesiredConfigVersion: "v1"},
+			}
+
+			result, err := reconciler.handleProvisioning(ctx, instance)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+			latestProvisionJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
+			Expect(latestProvisionJob).To(BeNil())
+		})
+	})
+
+	Context("handleDeprovisioning", func() {
+		var reconciler *HostPoolReconciler
+
+		BeforeEach(func() {
+			reconciler = &HostPoolReconciler{
+				Client:               k8sClient,
+				apiReader:            k8sClient,
+				Scheme:               k8sClient.Scheme(),
+				ProvisioningProvider: &mockProvisioningProvider{},
+			}
+		})
+
+		ctx := context.Background()
+
+		It("should skip deprovisioning when ManagementStateManual annotation is set", func() {
+			instance := &v1alpha1.HostPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						osacHostPoolManagementStateAnnotation: ManagementStateManual,
+					},
+				},
+			}
+
+			result, err := reconciler.handleDeprovisioning(ctx, instance)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+			latestDeprovisionJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeDeprovision)
+			Expect(latestDeprovisionJob).To(BeNil())
 		})
 	})
 })

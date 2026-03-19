@@ -18,9 +18,13 @@ package controller
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +40,8 @@ import (
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 
 	"github.com/osac-project/osac-operator/api/v1alpha1"
+	"github.com/osac-project/osac-operator/internal/helpers"
+	"github.com/osac-project/osac-operator/internal/provisioning"
 )
 
 // NewHostPoolComponentFn is the type of a function that creates a required component
@@ -55,33 +61,44 @@ func (r *HostPoolReconciler) hostPoolComponents() []hostPoolComponent {
 // HostPoolReconciler reconciles a HostPool object
 type HostPoolReconciler struct {
 	client.Client
-	Scheme                *runtime.Scheme
-	CreateHostPoolWebhook string
-	DeleteHostPoolWebhook string
-	HostPoolNamespace     string
-	webhookClient         *WebhookClient
+	apiReader            client.Reader
+	Scheme               *runtime.Scheme
+	HostPoolNamespace    string
+	ProvisioningProvider provisioning.ProvisioningProvider
+	StatusPollInterval   time.Duration
+	MaxJobHistory        int
 }
 
 func NewHostPoolReconciler(
 	client client.Client,
+	apiReader client.Reader,
 	scheme *runtime.Scheme,
-	createHostPoolWebhook string,
-	deleteHostPoolWebhook string,
 	hostPoolNamespace string,
-	minimumRequestInterval time.Duration,
+	provisioningProvider provisioning.ProvisioningProvider,
+	statusPollInterval time.Duration,
+	maxJobHistory int,
 ) *HostPoolReconciler {
 
 	if hostPoolNamespace == "" {
 		hostPoolNamespace = defaultHostPoolNamespace
 	}
 
+	if statusPollInterval <= 0 {
+		statusPollInterval = DefaultStatusPollInterval
+	}
+
+	if maxJobHistory <= 0 {
+		maxJobHistory = DefaultMaxJobHistory
+	}
+
 	return &HostPoolReconciler{
-		Client:                client,
-		Scheme:                scheme,
-		CreateHostPoolWebhook: createHostPoolWebhook,
-		DeleteHostPoolWebhook: deleteHostPoolWebhook,
-		HostPoolNamespace:     hostPoolNamespace,
-		webhookClient:         NewWebhookClient(10*time.Second, minimumRequestInterval),
+		Client:               client,
+		apiReader:            apiReader,
+		Scheme:               scheme,
+		HostPoolNamespace:    hostPoolNamespace,
+		ProvisioningProvider: provisioningProvider,
+		StatusPollInterval:   statusPollInterval,
+		MaxJobHistory:        maxJobHistory,
 	}
 }
 
@@ -239,23 +256,40 @@ func (r *HostPoolReconciler) handleUpdate(ctx context.Context, req reconcile.Req
 		log.Info("component operation completed", "component", comp.name, "result", result)
 	}
 
-	// Call webhook to create/update host pool resources
-	if r.CreateHostPoolWebhook != "" {
-		_, err := r.webhookClient.TriggerWebhook(ctx, r.CreateHostPoolWebhook, instance)
-		if err != nil {
-			instance.SetCondition(v1alpha1.HostPoolConditionProgressing, metav1.ConditionFalse, "WebhookFailed", fmt.Sprintf("Webhook call failed: %v", err))
-			instance.Status.Phase = v1alpha1.HostPoolPhaseFailed
-			return ctrl.Result{}, err
-		}
+	// Compute config version from spec and copy reconciled version from annotation
+	if err := r.handleDesiredConfigVersion(instance); err != nil {
+		return ctrl.Result{}, err
+	}
+	r.handleReconciledConfigVersion(ctx, instance)
+
+	// Handle provisioning via provider
+	provisionResult, err := r.handleProvisioning(ctx, instance)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
-	// Update status to Ready if everything succeeded
-	instance.SetCondition(v1alpha1.HostPoolConditionProgressing, metav1.ConditionFalse, "HostPoolReady", "HostPool is ready")
-	instance.SetCondition(v1alpha1.HostPoolConditionAvailable, metav1.ConditionTrue, "HostPoolAvailable", "HostPool is available")
-	instance.Status.Phase = v1alpha1.HostPoolPhaseReady
+	// Check provision job status before setting Ready
+	latestProvisionJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
+	if latestProvisionJob != nil {
+		if latestProvisionJob.State == v1alpha1.JobStateSucceeded {
+			instance.SetCondition(v1alpha1.HostPoolConditionProgressing, metav1.ConditionFalse, "HostPoolReady", "HostPool is ready")
+			instance.SetCondition(v1alpha1.HostPoolConditionAvailable, metav1.ConditionTrue, "HostPoolAvailable", "HostPool is available")
+			instance.Status.Phase = v1alpha1.HostPoolPhaseReady
+			instance.Status.HostSets = instance.Spec.HostSets
+		} else if !latestProvisionJob.State.IsTerminal() {
+			instance.SetCondition(v1alpha1.HostPoolConditionProgressing, metav1.ConditionTrue, "ProvisionJobRunning", fmt.Sprintf("Provision job %s is %s", latestProvisionJob.JobID, latestProvisionJob.State))
+		}
+	} else if instance.Status.DesiredConfigVersion == instance.Status.ReconciledConfigVersion {
+		// No provision job and config is up to date — resource is ready
+		instance.SetCondition(v1alpha1.HostPoolConditionProgressing, metav1.ConditionFalse, "HostPoolReady", "HostPool is ready")
+		instance.SetCondition(v1alpha1.HostPoolConditionAvailable, metav1.ConditionTrue, "HostPoolAvailable", "HostPool is available")
+		instance.Status.Phase = v1alpha1.HostPoolPhaseReady
+		instance.Status.HostSets = instance.Spec.HostSets
+	}
 
-	// Update status with host sets info
-	instance.Status.HostSets = instance.Spec.HostSets
+	if provisionResult.RequeueAfter > 0 {
+		return provisionResult, nil
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -293,37 +327,30 @@ func (r *HostPoolReconciler) handleDelete(ctx context.Context, req reconcile.Req
 		return ctrl.Result{}, nil
 	}
 
+	// Handle deprovisioning via provider
+	// Waits for provision job termination and polls deprovision job if needed
+	deprovisionResult, err := r.handleDeprovisioning(ctx, instance)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	// If deprovision job is still running, requeue and wait
+	if deprovisionResult.RequeueAfter > 0 {
+		return deprovisionResult, nil
+	}
+
 	ns, err := r.findNamespace(ctx, instance)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	if ns != nil {
-		// Call webhook to delete host pool resources
-		if url := r.DeleteHostPoolWebhook; url != "" {
-			val, exists := instance.Annotations[osacHostPoolManagementStateAnnotation]
-			if exists && val == ManagementStateManual {
-				log.Info("not triggering delete webhook due to management-state annotation", "url", url, "management-state", val)
-			} else {
-				remainingTime, err := r.webhookClient.TriggerWebhook(ctx, url, instance)
-				if err != nil {
-					log.Error(err, "failed to trigger webhook", "url", url, "error", err)
-					return ctrl.Result{Requeue: true}, nil
-				}
-
-				if remainingTime != 0 {
-					return ctrl.Result{RequeueAfter: remainingTime}, nil
-				}
-			}
-		}
-
 		// Delete working namespace
 		log.Info("deleting host pool namespace", "namespace", ns.GetName())
 		if err := r.Client.Delete(ctx, ns); err != nil {
 			log.Error(err, "failed to delete namespace", "namespace", ns.GetName(), "error", err)
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, nil
 	}
 
 	// Allow kubernetes to delete the hostpool
@@ -334,5 +361,249 @@ func (r *HostPoolReconciler) handleDelete(ctx context.Context, req reconcile.Req
 	}
 
 	log.Info("HostPool deletion completed", "name", instance.Name)
+	return ctrl.Result{}, nil
+}
+
+// handleProvisioning manages the provisioning job lifecycle for HostPool.
+// Uses shouldTriggerProvision to decide action, with API server read-through guard.
+func (r *HostPoolReconciler) handleProvisioning(ctx context.Context, instance *v1alpha1.HostPool) (ctrl.Result, error) {
+	log := ctrllog.FromContext(ctx)
+
+	// Check for ManagementStateManual annotation
+	val, exists := instance.Annotations[osacHostPoolManagementStateAnnotation]
+	if exists && val == ManagementStateManual {
+		log.Info("skipping provisioning due to management-state annotation", "management-state", val)
+		return ctrl.Result{}, nil
+	}
+
+	action, latestProvisionJob := r.shouldTriggerProvision(ctx, instance)
+	switch action {
+	case provisionSkip:
+		return ctrl.Result{}, nil
+	case provisionRequeue:
+		return ctrl.Result{Requeue: true}, nil
+	case provisionTrigger:
+		return r.triggerProvisionJob(ctx, instance)
+	default: // provisionPoll
+		return r.pollProvisionJob(ctx, log, instance, latestProvisionJob)
+	}
+}
+
+func (r *HostPoolReconciler) triggerProvisionJob(ctx context.Context, instance *v1alpha1.HostPool) (ctrl.Result, error) {
+	log := ctrllog.FromContext(ctx)
+	log.Info("triggering provision job")
+
+	result, err := r.ProvisioningProvider.TriggerProvision(ctx, instance)
+	if err != nil {
+		if rateLimitErr, ok := provisioning.AsRateLimitError(err); ok {
+			log.Info("provision request rate-limited, requeueing", "retryAfter", rateLimitErr.RetryAfter)
+			return ctrl.Result{RequeueAfter: rateLimitErr.RetryAfter}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("failed to trigger provision: %w", err)
+	}
+
+	instance.Status.Jobs = helpers.AppendJob(instance.Status.Jobs, v1alpha1.JobStatus{
+		JobID:         result.JobID,
+		Type:          v1alpha1.JobTypeProvision,
+		State:         result.InitialState,
+		Message:       result.Message,
+		Timestamp:     metav1.NewTime(time.Now().UTC()),
+		ConfigVersion: instance.Status.DesiredConfigVersion,
+	}, r.MaxJobHistory)
+	latestJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
+	log.Info("provision job triggered", "jobID", latestJob.JobID, "configVersion", latestJob.ConfigVersion)
+	return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
+}
+
+func (r *HostPoolReconciler) pollProvisionJob(ctx context.Context, log logr.Logger,
+	instance *v1alpha1.HostPool, latestProvisionJob *v1alpha1.JobStatus) (ctrl.Result, error) {
+
+	log.Info("polling provision job status", "jobID", latestProvisionJob.JobID, "currentState", latestProvisionJob.State)
+	status, err := r.ProvisioningProvider.GetProvisionStatus(ctx, instance, latestProvisionJob.JobID)
+	if err != nil {
+		log.Error(err, "failed to get provision status", "jobID", latestProvisionJob.JobID)
+		return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
+	}
+
+	if status.State != latestProvisionJob.State || status.Message != latestProvisionJob.Message {
+		log.Info("provision job status changed", "jobID", latestProvisionJob.JobID, "oldState", latestProvisionJob.State, "newState", status.State)
+		updatedJob := *latestProvisionJob
+		updatedJob.State = status.State
+		updatedJob.Message = status.Message
+		helpers.UpdateJob(instance.Status.Jobs, updatedJob)
+
+		if status.State == v1alpha1.JobStateFailed {
+			log.Info("provision job failed", "jobID", latestProvisionJob.JobID)
+			instance.SetCondition(v1alpha1.HostPoolConditionProgressing, metav1.ConditionFalse, "ProvisionJobFailed", fmt.Sprintf("Provision job %s failed: %s", latestProvisionJob.JobID, status.Message))
+			instance.Status.Phase = v1alpha1.HostPoolPhaseFailed
+		}
+	}
+
+	if !status.State.IsTerminal() {
+		return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+// shouldTriggerProvision determines the next provisioning action.
+func (r *HostPoolReconciler) shouldTriggerProvision(ctx context.Context, instance *v1alpha1.HostPool) (provisionAction, *v1alpha1.JobStatus) {
+	latestJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
+	if latestJob != nil && latestJob.JobID != "" && !latestJob.State.IsTerminal() {
+		return provisionPoll, latestJob
+	}
+	if instance.Status.DesiredConfigVersion == instance.Status.ReconciledConfigVersion {
+		return provisionSkip, latestJob
+	}
+	if r.checkAPIServerForNonTerminalJob(ctx, instance) {
+		return provisionRequeue, nil
+	}
+	return provisionTrigger, latestJob
+}
+
+func (r *HostPoolReconciler) checkAPIServerForNonTerminalJob(ctx context.Context, instance *v1alpha1.HostPool) bool {
+	log := ctrllog.FromContext(ctx)
+	fresh := &v1alpha1.HostPool{}
+	if err := r.apiReader.Get(ctx, client.ObjectKeyFromObject(instance), fresh); err != nil {
+		return false
+	}
+	freshJob := v1alpha1.FindLatestJobByType(fresh.Status.Jobs, v1alpha1.JobTypeProvision)
+	if freshJob != nil && freshJob.JobID != "" && !freshJob.State.IsTerminal() {
+		log.Info("skipping provision trigger: non-terminal job found via API server", "jobID", freshJob.JobID, "state", freshJob.State)
+		return true
+	}
+	return false
+}
+
+func (r *HostPoolReconciler) handleDesiredConfigVersion(instance *v1alpha1.HostPool) error {
+	specJSON, err := json.Marshal(instance.Spec)
+	if err != nil {
+		return fmt.Errorf("failed to marshal spec to JSON: %w", err)
+	}
+	hasher := fnv.New64a()
+	if _, err := hasher.Write(specJSON); err != nil {
+		return fmt.Errorf("failed to write to hash: %w", err)
+	}
+	instance.Status.DesiredConfigVersion = hex.EncodeToString(hasher.Sum(nil))
+	return nil
+}
+
+func (r *HostPoolReconciler) handleReconciledConfigVersion(ctx context.Context, instance *v1alpha1.HostPool) {
+	log := ctrllog.FromContext(ctx)
+	if version, exists := instance.Annotations[osacReconciledConfigVersionAnnotation]; exists {
+		instance.Status.ReconciledConfigVersion = version
+		log.V(1).Info("copied reconciled config version from annotation", "version", version)
+	} else {
+		instance.Status.ReconciledConfigVersion = ""
+	}
+}
+
+// handleDeprovisioning manages the deprovisioning job lifecycle for HostPool.
+// Waits for provision job termination if needed, then triggers deprovision job.
+func (r *HostPoolReconciler) handleDeprovisioning(ctx context.Context, instance *v1alpha1.HostPool) (ctrl.Result, error) {
+	log := ctrllog.FromContext(ctx)
+
+	// Check for ManagementStateManual annotation
+	val, exists := instance.Annotations[osacHostPoolManagementStateAnnotation]
+	if exists && val == ManagementStateManual {
+		log.Info("skipping deprovisioning due to management-state annotation", "management-state", val)
+		return ctrl.Result{}, nil
+	}
+
+	// Check if deprovision job already exists
+	latestDeprovisionJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeDeprovision)
+
+	// If no deprovision job exists, trigger one
+	if latestDeprovisionJob == nil {
+		log.Info("triggering deprovision job")
+		result, err := r.ProvisioningProvider.TriggerDeprovision(ctx, instance)
+		if err != nil {
+			if rateLimitErr, ok := provisioning.AsRateLimitError(err); ok {
+				log.Info("deprovision request rate-limited, requeueing", "retryAfter", rateLimitErr.RetryAfter)
+				return ctrl.Result{RequeueAfter: rateLimitErr.RetryAfter}, nil
+			}
+			return ctrl.Result{}, fmt.Errorf("failed to trigger deprovision: %w", err)
+		}
+
+		// Handle different deprovision actions
+		switch result.Action {
+		case provisioning.DeprovisionSkipped:
+			log.Info("deprovisioning skipped by provider")
+			return ctrl.Result{}, nil
+
+		case provisioning.DeprovisionWaiting:
+			log.Info("waiting for provision job to terminate before deprovisioning")
+			// Update provision job status if provided
+			if result.ProvisionJobStatus != nil {
+				latestProvisionJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
+				if latestProvisionJob != nil {
+					updatedJob := *latestProvisionJob
+					updatedJob.State = result.ProvisionJobStatus.State
+					updatedJob.Message = result.ProvisionJobStatus.Message
+					helpers.UpdateJob(instance.Status.Jobs, updatedJob)
+				}
+			}
+			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
+
+		case provisioning.DeprovisionTriggered:
+			log.Info("deprovision job triggered", "jobID", result.JobID)
+			// Update provision job status if provided
+			if result.ProvisionJobStatus != nil {
+				latestProvisionJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
+				if latestProvisionJob != nil {
+					updatedJob := *latestProvisionJob
+					updatedJob.State = result.ProvisionJobStatus.State
+					updatedJob.Message = result.ProvisionJobStatus.Message
+					helpers.UpdateJob(instance.Status.Jobs, updatedJob)
+				}
+			}
+			// Append deprovision job
+			instance.Status.Jobs = helpers.AppendJob(instance.Status.Jobs, v1alpha1.JobStatus{
+				JobID:                  result.JobID,
+				Type:                   v1alpha1.JobTypeDeprovision,
+				State:                  v1alpha1.JobStatePending,
+				Message:                "Deprovision job triggered",
+				Timestamp:              metav1.NewTime(time.Now().UTC()),
+				BlockDeletionOnFailure: result.BlockDeletionOnFailure,
+			}, r.MaxJobHistory)
+			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
+
+		default:
+			return ctrl.Result{}, fmt.Errorf("unknown deprovision action: %v", result.Action)
+		}
+	}
+
+	// Poll existing deprovision job status
+	if !latestDeprovisionJob.State.IsTerminal() {
+		log.Info("polling deprovision job status", "jobID", latestDeprovisionJob.JobID, "currentState", latestDeprovisionJob.State)
+		status, err := r.ProvisioningProvider.GetDeprovisionStatus(ctx, instance, latestDeprovisionJob.JobID)
+		if err != nil {
+			log.Error(err, "failed to get deprovision status", "jobID", latestDeprovisionJob.JobID)
+			// Don't block on polling errors, just requeue
+			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
+		}
+
+		// Update job status if changed
+		if status.State != latestDeprovisionJob.State || status.Message != latestDeprovisionJob.Message {
+			log.Info("deprovision job status changed", "jobID", latestDeprovisionJob.JobID, "oldState", latestDeprovisionJob.State, "newState", status.State)
+			updatedJob := *latestDeprovisionJob
+			updatedJob.State = status.State
+			updatedJob.Message = status.Message
+			helpers.UpdateJob(instance.Status.Jobs, updatedJob)
+		}
+
+		// Continue polling if still running
+		if !status.State.IsTerminal() {
+			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
+		}
+
+		// Job reached terminal state
+		if !status.State.IsSuccessful() && latestDeprovisionJob.BlockDeletionOnFailure {
+			log.Info("deprovision job failed, blocking deletion to prevent orphaned resources",
+				"jobID", latestDeprovisionJob.JobID, "state", status.State)
+			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
+		}
+	}
+
+	// Job is terminal and successful (or not blocking), proceed with deletion
 	return ctrl.Result{}, nil
 }

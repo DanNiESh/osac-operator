@@ -111,4 +111,11 @@ type JobStatus struct {
 	// EDA sets this to false as webhook handles cleanup
 	// +kubebuilder:validation:Optional
 	BlockDeletionOnFailure bool `json:"blockDeletionOnFailure,omitempty"`
+
+	// ConfigVersion is the DesiredConfigVersion at the time this job was triggered.
+	// Used to determine retry behavior on failure: if ConfigVersion differs from
+	// the current DesiredConfigVersion, a new job is triggered immediately.
+	// If they match, the controller retries with exponential backoff.
+	// +kubebuilder:validation:Optional
+	ConfigVersion string `json:"configVersion,omitempty"`
 }
