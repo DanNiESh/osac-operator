@@ -524,7 +524,17 @@ func setupNetworkingControllers(
 		return fmt.Errorf("subnet controller: %w", err)
 	}
 
-	// Setup SecurityGroup controller (no feedback controller yet)
+	// Setup SecurityGroup controller and feedback
+	if grpcConn != nil {
+		if err := controller.NewSecurityGroupFeedbackReconciler(
+			localMgr.GetClient(),
+			grpcConn,
+			networkingNamespace,
+		).SetupWithManager(localMgr); err != nil {
+			return fmt.Errorf("securitygroup feedback controller: %w", err)
+		}
+	}
+
 	if err := (&controller.SecurityGroupReconciler{
 		Client:               localMgr.GetClient(),
 		Scheme:               localMgr.GetScheme(),
