@@ -836,7 +836,23 @@ func main() {
 	}
 
 	setupLog.Info("starting manager")
-	g, ctx := errgroup.WithContext(ctrl.SetupSignalHandler())
+	if err := startComponents(ctrl.SetupSignalHandler(), remoteCluster, remoteProvider, mgr); err != nil {
+		setupLog.Error(err, "problem running manager")
+		os.Exit(1)
+	}
+}
+
+// startComponents runs the remote cluster, remote provider, and manager
+// concurrently using errgroup. If any component returns an error, the shared
+// context is cancelled and all other components are signaled to stop.
+// Context cancellation errors are filtered since they represent normal shutdown.
+func startComponents(
+	ctx context.Context,
+	remoteCluster cluster.Cluster,
+	remoteProvider multicluster.Provider,
+	mgr mcmanager.Manager,
+) error {
+	g, ctx := errgroup.WithContext(ctx)
 	if remoteCluster != nil {
 		g.Go(func() error {
 			return ignoreCanceled(remoteCluster.Start(ctx))
@@ -850,10 +866,7 @@ func main() {
 	g.Go(func() error {
 		return ignoreCanceled(mgr.Start(ctx))
 	})
-	if err := g.Wait(); err != nil {
-		setupLog.Error(err, "problem running manager")
-		os.Exit(1)
-	}
+	return g.Wait()
 }
 
 // ignoreCanceled returns nil if the error is a context cancellation,
