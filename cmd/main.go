@@ -20,7 +20,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -869,10 +868,11 @@ func startComponents(
 	return g.Wait()
 }
 
-// ignoreCanceled returns nil if the error is a context cancellation,
+// ignoreCanceled returns nil if the error is exactly context.Canceled,
 // since that's the expected shutdown path when errgroup cancels the context.
+// Only pure cancellation is filtered — mixed/wrapped errors are preserved.
 func ignoreCanceled(err error) error {
-	if err != nil && errors.Is(err, context.Canceled) {
+	if err == context.Canceled {
 		return nil
 	}
 	return err

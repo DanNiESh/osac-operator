@@ -22,10 +22,18 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
+	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
+
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 )
+
+func TestMain(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Main Suite")
+}
 
 // mockCluster implements cluster.Cluster.Start for testing.
 type mockCluster struct {
@@ -57,51 +65,40 @@ func (m *mockManager) Start(ctx context.Context) error {
 	return m.startFunc(ctx)
 }
 
-func TestIgnoreCanceled(t *testing.T) {
-	t.Run("returns nil for context.Canceled", func(t *testing.T) {
-		if err := ignoreCanceled(context.Canceled); err != nil {
-			t.Errorf("expected nil, got %v", err)
-		}
+var _ = Describe("ignoreCanceled", func() {
+	It("should return nil for context.Canceled", func() {
+		Expect(ignoreCanceled(context.Canceled)).To(Succeed())
 	})
 
-	t.Run("returns nil for wrapped context.Canceled", func(t *testing.T) {
+	It("should preserve wrapped context.Canceled (not a pure cancellation)", func() {
 		wrapped := errors.Join(errors.New("something"), context.Canceled)
-		if err := ignoreCanceled(wrapped); err != nil {
-			t.Errorf("expected nil, got %v", err)
-		}
+		Expect(ignoreCanceled(wrapped)).NotTo(Succeed())
 	})
 
-	t.Run("returns nil for nil error", func(t *testing.T) {
-		if err := ignoreCanceled(nil); err != nil {
-			t.Errorf("expected nil, got %v", err)
-		}
+	It("should return nil for nil error", func() {
+		Expect(ignoreCanceled(nil)).To(Succeed())
 	})
 
-	t.Run("preserves real errors", func(t *testing.T) {
+	It("should preserve real errors", func() {
 		realErr := errors.New("connection refused")
-		if err := ignoreCanceled(realErr); err != realErr {
-			t.Errorf("expected original error, got %v", err)
-		}
+		Expect(ignoreCanceled(realErr)).To(Equal(realErr))
 	})
-}
+})
 
-func TestStartComponents(t *testing.T) {
-	t.Run("manager only (no remote cluster or provider)", func(t *testing.T) {
+var _ = Describe("startComponents", func() {
+	It("should succeed with manager only (no remote cluster or provider)", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		mgr := &mockManager{
 			startFunc: func(ctx context.Context) error {
-				cancel() // simulate clean shutdown
+				cancel()
 				return context.Canceled
 			},
 		}
 
-		err := startComponents(ctx, nil, nil, mgr)
-		if err != nil {
-			t.Errorf("expected nil, got %v", err)
-		}
+		Expect(startComponents(ctx, nil, nil, mgr)).To(Succeed())
 	})
 
-	t.Run("manager error propagates", func(t *testing.T) {
+	It("should propagate manager errors", func() {
 		mgrErr := errors.New("manager failed")
 		mgr := &mockManager{
 			startFunc: func(ctx context.Context) error {
@@ -109,13 +106,10 @@ func TestStartComponents(t *testing.T) {
 			},
 		}
 
-		err := startComponents(context.Background(), nil, nil, mgr)
-		if !errors.Is(err, mgrErr) {
-			t.Errorf("expected manager error, got %v", err)
-		}
+		Expect(startComponents(context.Background(), nil, nil, mgr)).To(MatchError(mgrErr))
 	})
 
-	t.Run("remote cluster error cancels manager", func(t *testing.T) {
+	It("should propagate remote cluster errors and cancel manager", func() {
 		clusterErr := errors.New("remote cluster unreachable")
 		cl := &mockCluster{
 			startFunc: func(ctx context.Context) error {
@@ -124,19 +118,15 @@ func TestStartComponents(t *testing.T) {
 		}
 		mgr := &mockManager{
 			startFunc: func(ctx context.Context) error {
-				// Block until context is cancelled by the cluster failure
 				<-ctx.Done()
 				return ctx.Err()
 			},
 		}
 
-		err := startComponents(context.Background(), cl, nil, mgr)
-		if !errors.Is(err, clusterErr) {
-			t.Errorf("expected cluster error, got %v", err)
-		}
+		Expect(startComponents(context.Background(), cl, nil, mgr)).To(MatchError(clusterErr))
 	})
 
-	t.Run("remote provider error cancels manager and cluster", func(t *testing.T) {
+	It("should propagate remote provider errors and cancel cluster and manager", func() {
 		providerErr := errors.New("provider failed to engage")
 		cl := &mockCluster{
 			startFunc: func(ctx context.Context) error {
@@ -156,13 +146,10 @@ func TestStartComponents(t *testing.T) {
 			},
 		}
 
-		err := startComponents(context.Background(), cl, prov, mgr)
-		if !errors.Is(err, providerErr) {
-			t.Errorf("expected provider error, got %v", err)
-		}
+		Expect(startComponents(context.Background(), cl, prov, mgr)).To(MatchError(providerErr))
 	})
 
-	t.Run("context cancellation shuts down all components gracefully", func(t *testing.T) {
+	It("should shut down all components gracefully on context cancellation", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 
 		clusterStopped := make(chan struct{})
@@ -196,37 +183,15 @@ func TestStartComponents(t *testing.T) {
 			done <- startComponents(ctx, cl, prov, mgr)
 		}()
 
-		// Simulate SIGTERM by cancelling the context
 		cancel()
 
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Errorf("expected nil (canceled is filtered), got %v", err)
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("timeout waiting for startComponents to return")
-		}
-
-		// Verify all components were signaled to stop
-		select {
-		case <-clusterStopped:
-		default:
-			t.Error("cluster was not stopped")
-		}
-		select {
-		case <-providerStopped:
-		default:
-			t.Error("provider was not stopped")
-		}
-		select {
-		case <-mgrStopped:
-		default:
-			t.Error("manager was not stopped")
-		}
+		Eventually(done, 5*time.Second).Should(Receive(BeNil()))
+		Eventually(clusterStopped).Should(BeClosed())
+		Eventually(providerStopped).Should(BeClosed())
+		Eventually(mgrStopped).Should(BeClosed())
 	})
 
-	t.Run("cluster failure stops provider and manager", func(t *testing.T) {
+	It("should stop provider and manager when cluster fails", func() {
 		clusterErr := errors.New("cluster connection lost")
 
 		providerStopped := make(chan struct{})
@@ -234,7 +199,6 @@ func TestStartComponents(t *testing.T) {
 
 		cl := &mockCluster{
 			startFunc: func(ctx context.Context) error {
-				// Simulate cluster failing after brief operation
 				time.Sleep(10 * time.Millisecond)
 				return clusterErr
 			},
@@ -254,21 +218,8 @@ func TestStartComponents(t *testing.T) {
 			},
 		}
 
-		err := startComponents(context.Background(), cl, prov, mgr)
-		if !errors.Is(err, clusterErr) {
-			t.Errorf("expected cluster error, got %v", err)
-		}
-
-		// Verify provider and manager were cancelled
-		select {
-		case <-providerStopped:
-		case <-time.After(5 * time.Second):
-			t.Error("provider was not stopped after cluster failure")
-		}
-		select {
-		case <-mgrStopped:
-		case <-time.After(5 * time.Second):
-			t.Error("manager was not stopped after cluster failure")
-		}
+		Expect(startComponents(context.Background(), cl, prov, mgr)).To(MatchError(clusterErr))
+		Eventually(providerStopped, 5*time.Second).Should(BeClosed())
+		Eventually(mgrStopped, 5*time.Second).Should(BeClosed())
 	})
-}
+})
