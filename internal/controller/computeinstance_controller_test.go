@@ -1440,6 +1440,201 @@ var _ = Describe("ComputeInstance Controller", func() {
 		})
 	})
 
+	Context("Tenant-not-ready Provisioned condition", func() {
+		const namespaceName = "default"
+
+		ctx := context.Background()
+
+		deleteCI := func(name string) {
+			ci := &osacv1alpha1.ComputeInstance{}
+			nn := types.NamespacedName{Name: name, Namespace: namespaceName}
+			if err := k8sClient.Get(ctx, nn, ci); err == nil {
+				ci.Finalizers = nil
+				_ = k8sClient.Update(ctx, ci)
+				_ = k8sClient.Delete(ctx, ci)
+			}
+		}
+
+		It("should set Provisioned=False with Tenant phase when tenant is Progressing", func() {
+			const resourceName = "test-ci-tenant-progressing"
+			const tenantName = "tenant-progressing-msg"
+			defer deleteCI(resourceName)
+			defer deleteTenantInNamespace(ctx, namespaceName, tenantName)
+
+			// Create tenant in Progressing state (no StorageClassReady condition)
+			tenant := &osacv1alpha1.Tenant{
+				ObjectMeta: metav1.ObjectMeta{Name: tenantName, Namespace: namespaceName},
+			}
+			Expect(k8sClient.Create(ctx, tenant)).To(Succeed())
+			tenant.Status.Phase = osacv1alpha1.TenantPhaseProgressing
+			Expect(k8sClient.Status().Update(ctx, tenant)).To(Succeed())
+
+			nn := types.NamespacedName{Name: resourceName, Namespace: namespaceName}
+			resource := &osacv1alpha1.ComputeInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: namespaceName,
+					Annotations: map[string]string{
+						osacTenantAnnotation: tenantName,
+					},
+				},
+				Spec: newTestComputeInstanceSpec("test_template"),
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			controllerReconciler := NewComputeInstanceReconciler(testMcManager, "", namespaceName, &mockProvisioningProvider{name: string(provisioning.ProviderTypeAAP)}, 100*time.Millisecond, 0, mcmanager.LocalCluster)
+			Eventually(func() error {
+				return controllerReconciler.Client.Get(ctx, nn, &osacv1alpha1.ComputeInstance{})
+			}, 2*time.Second, 10*time.Millisecond).Should(Succeed())
+
+			result, err := controllerReconciler.Reconcile(ctx, mcreconcile.Request{Request: reconcile.Request{NamespacedName: nn}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(10 * time.Second))
+
+			ci := &osacv1alpha1.ComputeInstance{}
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, nn, ci)).To(Succeed())
+				cond := ci.GetStatusCondition(osacv1alpha1.ComputeInstanceConditionProvisioned)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal("TenantNotReady"))
+				g.Expect(cond.Message).To(ContainSubstring("Tenant '%s' is not ready (phase: Progressing)", tenantName))
+			}, 5*time.Second, 100*time.Millisecond).Should(Succeed())
+		})
+
+		It("should include StorageClassReady condition in Provisioned message", func() {
+			const resourceName = "test-ci-tenant-sc-msg"
+			const tenantName = "tenant-sc-msg"
+			defer deleteCI(resourceName)
+			defer deleteTenantInNamespace(ctx, namespaceName, tenantName)
+
+			// Create tenant in Progressing state with a StorageClassReady condition
+			tenant := &osacv1alpha1.Tenant{
+				ObjectMeta: metav1.ObjectMeta{Name: tenantName, Namespace: namespaceName},
+			}
+			Expect(k8sClient.Create(ctx, tenant)).To(Succeed())
+			tenant.Status.Phase = osacv1alpha1.TenantPhaseProgressing
+			tenant.SetStatusCondition(
+				osacv1alpha1.TenantConditionStorageClassReady,
+				metav1.ConditionFalse,
+				osacv1alpha1.TenantReasonMultipleFound,
+				"Multiple StorageClasses found with label osac.openshift.io/tenant="+tenantName+": sc1, sc2",
+			)
+			Expect(k8sClient.Status().Update(ctx, tenant)).To(Succeed())
+
+			nn := types.NamespacedName{Name: resourceName, Namespace: namespaceName}
+			resource := &osacv1alpha1.ComputeInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: namespaceName,
+					Annotations: map[string]string{
+						osacTenantAnnotation: tenantName,
+					},
+				},
+				Spec: newTestComputeInstanceSpec("test_template"),
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			controllerReconciler := NewComputeInstanceReconciler(testMcManager, "", namespaceName, &mockProvisioningProvider{name: string(provisioning.ProviderTypeAAP)}, 100*time.Millisecond, 0, mcmanager.LocalCluster)
+			Eventually(func() error {
+				return controllerReconciler.Client.Get(ctx, nn, &osacv1alpha1.ComputeInstance{})
+			}, 2*time.Second, 10*time.Millisecond).Should(Succeed())
+
+			result, err := controllerReconciler.Reconcile(ctx, mcreconcile.Request{Request: reconcile.Request{NamespacedName: nn}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(10 * time.Second))
+
+			ci := &osacv1alpha1.ComputeInstance{}
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, nn, ci)).To(Succeed())
+				cond := ci.GetStatusCondition(osacv1alpha1.ComputeInstanceConditionProvisioned)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal("TenantNotReady"))
+				g.Expect(cond.Message).To(ContainSubstring("StorageClassReady"))
+				g.Expect(cond.Message).To(ContainSubstring("sc1, sc2"))
+			}, 5*time.Second, 100*time.Millisecond).Should(Succeed())
+		})
+
+		It("should clear TenantNotReady message when tenant becomes Ready", func() {
+			const resourceName = "test-ci-tenant-recovery"
+			const tenantName = "tenant-recovery-msg"
+			defer deleteCI(resourceName)
+			defer deleteTenantInNamespace(ctx, namespaceName, tenantName)
+
+			// Create tenant in Progressing state
+			tenant := &osacv1alpha1.Tenant{
+				ObjectMeta: metav1.ObjectMeta{Name: tenantName, Namespace: namespaceName},
+			}
+			Expect(k8sClient.Create(ctx, tenant)).To(Succeed())
+			tenant.Status.Phase = osacv1alpha1.TenantPhaseProgressing
+			tenant.SetStatusCondition(
+				osacv1alpha1.TenantConditionStorageClassReady,
+				metav1.ConditionFalse,
+				osacv1alpha1.TenantReasonMultipleFound,
+				"Multiple StorageClasses found",
+			)
+			Expect(k8sClient.Status().Update(ctx, tenant)).To(Succeed())
+
+			nn := types.NamespacedName{Name: resourceName, Namespace: namespaceName}
+			resource := &osacv1alpha1.ComputeInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: namespaceName,
+					Annotations: map[string]string{
+						osacTenantAnnotation: tenantName,
+					},
+				},
+				Spec: newTestComputeInstanceSpec("test_template"),
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+
+			controllerReconciler := NewComputeInstanceReconciler(testMcManager, "", namespaceName, &mockProvisioningProvider{name: string(provisioning.ProviderTypeAAP)}, 100*time.Millisecond, 0, mcmanager.LocalCluster)
+			Eventually(func() error {
+				return controllerReconciler.Client.Get(ctx, nn, &osacv1alpha1.ComputeInstance{})
+			}, 2*time.Second, 10*time.Millisecond).Should(Succeed())
+
+			// First reconcile with Progressing tenant → Provisioned=False/TenantNotReady
+			result, err := controllerReconciler.Reconcile(ctx, mcreconcile.Request{Request: reconcile.Request{NamespacedName: nn}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(10 * time.Second))
+
+			ci := &osacv1alpha1.ComputeInstance{}
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, nn, ci)).To(Succeed())
+				cond := ci.GetStatusCondition(osacv1alpha1.ComputeInstanceConditionProvisioned)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Reason).To(Equal("TenantNotReady"))
+			}, 5*time.Second, 100*time.Millisecond).Should(Succeed())
+
+			// Transition tenant to Ready
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: tenantName, Namespace: namespaceName}, tenant)).To(Succeed())
+			tenant.Status.Phase = osacv1alpha1.TenantPhaseReady
+			tenant.Status.Namespace = namespaceName
+			Expect(k8sClient.Status().Update(ctx, tenant)).To(Succeed())
+			// Wait for cache to see Ready tenant
+			mgrClient := testMcManager.GetLocalManager().GetClient()
+			Eventually(func(g Gomega) {
+				cached := &osacv1alpha1.Tenant{}
+				g.Expect(mgrClient.Get(ctx, types.NamespacedName{Name: tenantName, Namespace: namespaceName}, cached)).To(Succeed())
+				g.Expect(cached.Status.Phase).To(Equal(osacv1alpha1.TenantPhaseReady))
+			}, 5*time.Second, 100*time.Millisecond).Should(Succeed())
+
+			// Second reconcile with Ready tenant → Provisioned=False/AsExpected (no KubeVirt VM)
+			_, err = controllerReconciler.Reconcile(ctx, mcreconcile.Request{Request: reconcile.Request{NamespacedName: nn}})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, nn, ci)).To(Succeed())
+				cond := ci.GetStatusCondition(osacv1alpha1.ComputeInstanceConditionProvisioned)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(osacv1alpha1.ReasonAsExpected))
+				g.Expect(cond.Message).To(BeEmpty())
+			}, 5*time.Second, 100*time.Millisecond).Should(Succeed())
+		})
+	})
+
 	Context("resolveSubnetNamespace", func() {
 		const namespaceName = "default"
 		var (
