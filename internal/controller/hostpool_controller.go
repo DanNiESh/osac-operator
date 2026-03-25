@@ -360,8 +360,8 @@ func (r *HostPoolReconciler) handleDelete(ctx context.Context, req reconcile.Req
 	return ctrl.Result{}, nil
 }
 
-func (r *HostPoolReconciler) provisionState(instance *v1alpha1.HostPool) *provisionState {
-	return &provisionState{
+func (r *HostPoolReconciler) provisionState(instance *v1alpha1.HostPool) *provisioning.State {
+	return &provisioning.State{
 		Jobs:                    &instance.Status.Jobs,
 		DesiredConfigVersion:    instance.Status.DesiredConfigVersion,
 		ReconciledConfigVersion: instance.Status.ReconciledConfigVersion,
@@ -380,20 +380,20 @@ func (r *HostPoolReconciler) handleProvisioning(ctx context.Context, instance *v
 	provState := r.provisionState(instance)
 	action, latestProvisionJob := r.shouldTriggerProvision(ctx, instance)
 	trigger := func() (ctrl.Result, error) {
-		return triggerProvision(ctx, r.ProvisioningProvider, instance, provState, r.MaxJobHistory, r.StatusPollInterval)
+		return provisioning.TriggerJob(ctx, r.ProvisioningProvider, instance, provState, r.MaxJobHistory, r.StatusPollInterval)
 	}
 
 	switch action {
-	case provisionSkip:
+	case provisioning.Skip:
 		return ctrl.Result{}, nil
-	case provisionRequeue:
+	case provisioning.Requeue:
 		return ctrl.Result{Requeue: true}, nil
-	case provisionTrigger:
+	case provisioning.Trigger:
 		return trigger()
-	case provisionBackoff:
-		return handleProvisionBackoff(ctx, *provState.Jobs, provState.DesiredConfigVersion, latestProvisionJob, trigger)
-	default: // provisionPoll
-		return pollProvision(ctx, r.ProvisioningProvider, instance, provState, latestProvisionJob, r.StatusPollInterval, func(message string) {
+	case provisioning.Backoff:
+		return provisioning.HandleBackoff(ctx, *provState.Jobs, provState.DesiredConfigVersion, latestProvisionJob, trigger)
+	default: // provisioning.Poll
+		return provisioning.PollJob(ctx, r.ProvisioningProvider, instance, provState, latestProvisionJob, r.StatusPollInterval, func(message string) {
 			instance.SetCondition(v1alpha1.HostPoolConditionProgressing, metav1.ConditionFalse, "ProvisionJobFailed",
 				fmt.Sprintf("Provision job %s failed: %s", latestProvisionJob.JobID, message))
 			instance.Status.Phase = v1alpha1.HostPoolPhaseFailed
@@ -401,14 +401,14 @@ func (r *HostPoolReconciler) handleProvisioning(ctx context.Context, instance *v
 	}
 }
 
-func (r *HostPoolReconciler) shouldTriggerProvision(ctx context.Context, instance *v1alpha1.HostPool) (provisionAction, *v1alpha1.JobStatus) {
-	return evaluateProvisionAction(r.provisionState(instance), func() bool {
-		return checkAPIServerForNonTerminalProvisionJob(ctx, r.apiReader, client.ObjectKeyFromObject(instance), &v1alpha1.HostPool{})
+func (r *HostPoolReconciler) shouldTriggerProvision(ctx context.Context, instance *v1alpha1.HostPool) (provisioning.Action, *v1alpha1.JobStatus) {
+	return provisioning.EvaluateAction(r.provisionState(instance), func() bool {
+		return provisioning.CheckAPIServerForNonTerminalProvisionJob(ctx, r.apiReader, client.ObjectKeyFromObject(instance), &v1alpha1.HostPool{})
 	})
 }
 
 func (r *HostPoolReconciler) handleDesiredConfigVersion(instance *v1alpha1.HostPool) error {
-	version, err := computeDesiredConfigVersion(instance.Spec)
+	version, err := provisioning.ComputeDesiredConfigVersion(instance.Spec)
 	if err != nil {
 		return err
 	}
@@ -417,7 +417,7 @@ func (r *HostPoolReconciler) handleDesiredConfigVersion(instance *v1alpha1.HostP
 }
 
 func (r *HostPoolReconciler) handleReconciledConfigVersion(ctx context.Context, instance *v1alpha1.HostPool) {
-	instance.Status.ReconciledConfigVersion = syncReconciledConfigVersion(ctx, instance.Annotations)
+	instance.Status.ReconciledConfigVersion = provisioning.SyncReconciledConfigVersion(ctx, instance.Annotations, osacReconciledConfigVersionAnnotation)
 }
 
 // handleDeprovisioning manages the deprovisioning job lifecycle for HostPool.

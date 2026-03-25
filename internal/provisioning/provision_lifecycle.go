@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package provisioning
 
 import (
 	"context"
@@ -31,68 +31,67 @@ import (
 
 	v1alpha1 "github.com/osac-project/osac-operator/api/v1alpha1"
 	"github.com/osac-project/osac-operator/internal/helpers"
-	"github.com/osac-project/osac-operator/internal/provisioning"
 )
 
-// provisionState points into the resource's status fields used by the provisioning lifecycle.
+// State points into the resource's status fields used by the provisioning lifecycle.
 // Jobs is a pointer so shared functions can modify the slice in place.
-type provisionState struct {
+type State struct {
 	Jobs                    *[]v1alpha1.JobStatus
 	DesiredConfigVersion    string
 	ReconciledConfigVersion string
 }
 
-// evaluateProvisionAction determines the next provisioning action based on job history and config versions.
-func evaluateProvisionAction(provState *provisionState, checkAPIServer func() bool) (provisionAction, *v1alpha1.JobStatus) {
+// EvaluateAction determines the next provisioning action based on job history and config versions.
+func EvaluateAction(provState *State, checkAPIServer func() bool) (Action, *v1alpha1.JobStatus) {
 	latestJob := v1alpha1.FindLatestJobByType(*provState.Jobs, v1alpha1.JobTypeProvision)
 
-	if !hasJobID(latestJob) {
+	if !HasJobID(latestJob) {
 		if provState.DesiredConfigVersion == provState.ReconciledConfigVersion {
-			return provisionSkip, latestJob
+			return Skip, latestJob
 		}
 	} else if !latestJob.State.IsTerminal() {
-		return provisionPoll, latestJob
+		return Poll, latestJob
 	} else if latestJob.ConfigVersion != "" {
 		if latestJob.ConfigVersion == provState.DesiredConfigVersion {
 			if latestJob.State == v1alpha1.JobStateSucceeded {
-				return provisionSkip, latestJob
+				return Skip, latestJob
 			}
-			return provisionBackoff, latestJob
+			return Backoff, latestJob
 		}
 	} else if provState.DesiredConfigVersion == provState.ReconciledConfigVersion {
-		return provisionSkip, latestJob
+		return Skip, latestJob
 	}
 
 	if checkAPIServer() {
-		return provisionRequeue, nil
+		return Requeue, nil
 	}
-	return provisionTrigger, latestJob
+	return Trigger, latestJob
 }
 
-// checkAPIServerForNonTerminalProvisionJob reads the resource directly from the API server
+// CheckAPIServerForNonTerminalProvisionJob reads the resource directly from the API server
 // and returns true if a non-terminal provision job exists.
-func checkAPIServerForNonTerminalProvisionJob(ctx context.Context, apiReader client.Reader, key client.ObjectKey, fresh client.Object) bool {
+func CheckAPIServerForNonTerminalProvisionJob(ctx context.Context, apiReader client.Reader, key client.ObjectKey, fresh client.Object) bool {
 	log := ctrllog.FromContext(ctx)
 	if err := apiReader.Get(ctx, key, fresh); err != nil {
 		return false
 	}
-	freshJobs := provisioning.GetJobsFromResource(fresh)
+	freshJobs := GetJobsFromResource(fresh)
 	freshJob := v1alpha1.FindLatestJobByType(freshJobs, v1alpha1.JobTypeProvision)
-	if hasJobID(freshJob) && !freshJob.State.IsTerminal() {
+	if HasJobID(freshJob) && !freshJob.State.IsTerminal() {
 		log.Info("skipping provision trigger: non-terminal job found via API server", "jobID", freshJob.JobID, "state", freshJob.State)
 		return true
 	}
 	return false
 }
 
-// triggerProvision triggers a new provision job and updates the jobs slice in place via provisionState.
-func triggerProvision(ctx context.Context, provider provisioning.ProvisioningProvider, resource client.Object, provState *provisionState, maxHistory int, pollInterval time.Duration) (ctrl.Result, error) {
+// TriggerJob triggers a new provision job and updates the jobs slice in place via State.
+func TriggerJob(ctx context.Context, provider ProvisioningProvider, resource client.Object, provState *State, maxHistory int, pollInterval time.Duration) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 	log.Info("triggering provision job")
 
 	result, err := provider.TriggerProvision(ctx, resource)
 	if err != nil {
-		if rateLimitErr, ok := provisioning.AsRateLimitError(err); ok {
+		if rateLimitErr, ok := AsRateLimitError(err); ok {
 			log.Info("provision request rate-limited, requeueing", "retryAfter", rateLimitErr.RetryAfter)
 			return ctrl.Result{RequeueAfter: rateLimitErr.RetryAfter}, nil
 		}
@@ -113,9 +112,9 @@ func triggerProvision(ctx context.Context, provider provisioning.ProvisioningPro
 	return ctrl.Result{RequeueAfter: pollInterval}, nil
 }
 
-// pollProvision checks the status of an existing provision job and updates the jobs slice in place.
+// PollJob checks the status of an existing provision job and updates the jobs slice in place.
 // onFailed is called when the job transitions to Failed state (e.g. to set the resource phase).
-func pollProvision(ctx context.Context, provider provisioning.ProvisioningProvider, resource client.Object, provState *provisionState, latestJob *v1alpha1.JobStatus, pollInterval time.Duration, onFailed func(message string)) (ctrl.Result, error) {
+func PollJob(ctx context.Context, provider ProvisioningProvider, resource client.Object, provState *State, latestJob *v1alpha1.JobStatus, pollInterval time.Duration, onFailed func(message string)) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 	log.Info("polling provision job status", "jobID", latestJob.JobID, "currentState", latestJob.State)
 
@@ -146,8 +145,8 @@ func pollProvision(ctx context.Context, provider provisioning.ProvisioningProvid
 	return ctrl.Result{}, nil
 }
 
-// computeDesiredConfigVersion computes a hash of the spec and returns it.
-func computeDesiredConfigVersion(spec interface{}) (string, error) {
+// ComputeDesiredConfigVersion computes a hash of the spec and returns it.
+func ComputeDesiredConfigVersion(spec interface{}) (string, error) {
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal spec to JSON: %w", err)
@@ -159,10 +158,10 @@ func computeDesiredConfigVersion(spec interface{}) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// syncReconciledConfigVersion returns the reconciled config version from the annotation, or empty string if not set.
-func syncReconciledConfigVersion(ctx context.Context, annotations map[string]string) string {
+// SyncReconciledConfigVersion returns the reconciled config version from the given annotation key, or empty string if not set.
+func SyncReconciledConfigVersion(ctx context.Context, annotations map[string]string, annotationKey string) string {
 	log := ctrllog.FromContext(ctx)
-	if version, exists := annotations[osacReconciledConfigVersionAnnotation]; exists {
+	if version, exists := annotations[annotationKey]; exists {
 		log.V(1).Info("copied reconciled config version from annotation", "version", version)
 		return version
 	}

@@ -336,17 +336,17 @@ func (r *ComputeInstanceReconciler) handleProvisioning(ctx context.Context, inst
 	action, latestProvisionJob := r.shouldTriggerProvision(ctx, instance)
 
 	switch action {
-	case provisionSkip:
+	case provisioning.Skip:
 		return ctrl.Result{}, nil
-	case provisionTrigger:
+	case provisioning.Trigger:
 		return r.triggerProvisionJob(ctx, instance)
-	case provisionRequeue:
+	case provisioning.Requeue:
 		return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
-	case provisionBackoff:
-		return handleProvisionBackoff(ctx, instance.Status.Jobs, instance.Status.DesiredConfigVersion, latestProvisionJob, func() (ctrl.Result, error) {
+	case provisioning.Backoff:
+		return provisioning.HandleBackoff(ctx, instance.Status.Jobs, instance.Status.DesiredConfigVersion, latestProvisionJob, func() (ctrl.Result, error) {
 			return r.triggerProvisionJob(ctx, instance)
 		})
-	default: // provisionPoll
+	default: // provisioning.Poll
 		return r.pollProvisionJob(ctx, instance, latestProvisionJob)
 	}
 }
@@ -464,7 +464,7 @@ func (r *ComputeInstanceReconciler) handleDeprovisioning(ctx context.Context, in
 	latestDeprovisionJob := v1alpha1.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeDeprovision)
 
 	// Trigger deprovisioning - provider decides internally if ready
-	if !hasJobID(latestDeprovisionJob) {
+	if !provisioning.HasJobID(latestDeprovisionJob) {
 		log.Info("triggering deprovisioning", "provider", r.ProvisioningProvider.Name())
 
 		result, err := r.ProvisioningProvider.TriggerDeprovision(ctx, instance)
@@ -684,7 +684,7 @@ func (r *ComputeInstanceReconciler) handleUpdate(ctx context.Context, _ reconcil
 	}
 
 	// Resolve subnet namespace if subnetRef is set
-	// This must happen before TriggerProvision so the annotation is available for AAP
+	// This must happen before provisioning.TriggerJob so the annotation is available for AAP
 	if instance.Spec.SubnetRef != "" {
 		subnetNamespace, err := r.resolveSubnetNamespace(ctx, instance)
 		if err != nil {
@@ -990,22 +990,22 @@ func determinePhaseFromPrintableStatus(ctx context.Context, kv *kubevirtv1.Virtu
 }
 
 // shouldTriggerProvision determines the next provisioning action.
-// Returns provisionPoll with the in-progress job when one is already running.
-// Returns provisionSkip when config versions match (no change needed).
-// Returns provisionRequeue when the API server has a non-terminal job that the cache missed (stale cache).
-// Returns provisionTrigger when provisioning is needed and no in-flight job exists.
-func (r *ComputeInstanceReconciler) shouldTriggerProvision(ctx context.Context, instance *v1alpha1.ComputeInstance) (provisionAction, *v1alpha1.JobStatus) {
-	return evaluateProvisionAction(&provisionState{
+// Returns provisioning.Poll with the in-progress job when one is already running.
+// Returns provisioning.Skip when config versions match (no change needed).
+// Returns provisioning.Requeue when the API server has a non-terminal job that the cache missed (stale cache).
+// Returns provisioning.Trigger when provisioning is needed and no in-flight job exists.
+func (r *ComputeInstanceReconciler) shouldTriggerProvision(ctx context.Context, instance *v1alpha1.ComputeInstance) (provisioning.Action, *v1alpha1.JobStatus) {
+	return provisioning.EvaluateAction(&provisioning.State{
 		Jobs:                    &instance.Status.Jobs,
 		DesiredConfigVersion:    instance.Status.DesiredConfigVersion,
 		ReconciledConfigVersion: instance.Status.ReconciledConfigVersion,
 	}, func() bool {
-		return checkAPIServerForNonTerminalProvisionJob(ctx, r.mgr.GetLocalManager().GetAPIReader(), client.ObjectKeyFromObject(instance), &v1alpha1.ComputeInstance{})
+		return provisioning.CheckAPIServerForNonTerminalProvisionJob(ctx, r.mgr.GetLocalManager().GetAPIReader(), client.ObjectKeyFromObject(instance), &v1alpha1.ComputeInstance{})
 	})
 }
 
 func (r *ComputeInstanceReconciler) handleDesiredConfigVersion(ctx context.Context, instance *v1alpha1.ComputeInstance) error {
-	version, err := computeDesiredConfigVersion(instance.Spec)
+	version, err := provisioning.ComputeDesiredConfigVersion(instance.Spec)
 	if err != nil {
 		return err
 	}

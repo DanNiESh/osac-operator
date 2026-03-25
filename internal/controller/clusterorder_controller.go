@@ -526,8 +526,8 @@ func (r *ClusterOrderReconciler) handleDelete(ctx context.Context, _ reconcile.R
 
 // handleProvisioning manages the provisioning job lifecycle for ClusterOrder.
 // Uses shouldTriggerProvision to decide action, with API server read-through guard.
-func (r *ClusterOrderReconciler) provisionState(instance *v1alpha1.ClusterOrder) *provisionState {
-	return &provisionState{
+func (r *ClusterOrderReconciler) provisionState(instance *v1alpha1.ClusterOrder) *provisioning.State {
+	return &provisioning.State{
 		Jobs:                    &instance.Status.Jobs,
 		DesiredConfigVersion:    instance.Status.DesiredConfigVersion,
 		ReconciledConfigVersion: instance.Status.ReconciledConfigVersion,
@@ -546,33 +546,33 @@ func (r *ClusterOrderReconciler) handleProvisioning(ctx context.Context, instanc
 	provState := r.provisionState(instance)
 	action, latestProvisionJob := r.shouldTriggerProvision(ctx, instance)
 	trigger := func() (ctrl.Result, error) {
-		return triggerProvision(ctx, r.ProvisioningProvider, instance, provState, r.MaxJobHistory, r.StatusPollInterval)
+		return provisioning.TriggerJob(ctx, r.ProvisioningProvider, instance, provState, r.MaxJobHistory, r.StatusPollInterval)
 	}
 
 	switch action {
-	case provisionSkip:
+	case provisioning.Skip:
 		return ctrl.Result{}, nil
-	case provisionRequeue:
+	case provisioning.Requeue:
 		return ctrl.Result{Requeue: true}, nil
-	case provisionTrigger:
+	case provisioning.Trigger:
 		return trigger()
-	case provisionBackoff:
-		return handleProvisionBackoff(ctx, *provState.Jobs, provState.DesiredConfigVersion, latestProvisionJob, trigger)
-	default: // provisionPoll
-		return pollProvision(ctx, r.ProvisioningProvider, instance, provState, latestProvisionJob, r.StatusPollInterval, func(_ string) {
+	case provisioning.Backoff:
+		return provisioning.HandleBackoff(ctx, *provState.Jobs, provState.DesiredConfigVersion, latestProvisionJob, trigger)
+	default: // provisioning.Poll
+		return provisioning.PollJob(ctx, r.ProvisioningProvider, instance, provState, latestProvisionJob, r.StatusPollInterval, func(_ string) {
 			instance.Status.Phase = v1alpha1.ClusterOrderPhaseFailed
 		})
 	}
 }
 
-func (r *ClusterOrderReconciler) shouldTriggerProvision(ctx context.Context, instance *v1alpha1.ClusterOrder) (provisionAction, *v1alpha1.JobStatus) {
-	return evaluateProvisionAction(r.provisionState(instance), func() bool {
-		return checkAPIServerForNonTerminalProvisionJob(ctx, r.apiReader, client.ObjectKeyFromObject(instance), &v1alpha1.ClusterOrder{})
+func (r *ClusterOrderReconciler) shouldTriggerProvision(ctx context.Context, instance *v1alpha1.ClusterOrder) (provisioning.Action, *v1alpha1.JobStatus) {
+	return provisioning.EvaluateAction(r.provisionState(instance), func() bool {
+		return provisioning.CheckAPIServerForNonTerminalProvisionJob(ctx, r.apiReader, client.ObjectKeyFromObject(instance), &v1alpha1.ClusterOrder{})
 	})
 }
 
 func (r *ClusterOrderReconciler) handleDesiredConfigVersion(instance *v1alpha1.ClusterOrder) error {
-	version, err := computeDesiredConfigVersion(instance.Spec)
+	version, err := provisioning.ComputeDesiredConfigVersion(instance.Spec)
 	if err != nil {
 		return err
 	}
@@ -581,7 +581,7 @@ func (r *ClusterOrderReconciler) handleDesiredConfigVersion(instance *v1alpha1.C
 }
 
 func (r *ClusterOrderReconciler) handleReconciledConfigVersion(ctx context.Context, instance *v1alpha1.ClusterOrder) {
-	instance.Status.ReconciledConfigVersion = syncReconciledConfigVersion(ctx, instance.Annotations)
+	instance.Status.ReconciledConfigVersion = provisioning.SyncReconciledConfigVersion(ctx, instance.Annotations, osacReconciledConfigVersionAnnotation)
 }
 
 // handleDeprovisioning manages the deprovisioning job lifecycle for ClusterOrder.

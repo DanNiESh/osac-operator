@@ -23,21 +23,23 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/osac-project/osac-operator/internal/provisioning"
+
 	v1alpha1 "github.com/osac-project/osac-operator/api/v1alpha1"
 )
 
-var _ = Describe("evaluateProvisionAction", func() {
+var _ = Describe("provisioning.EvaluateAction", func() {
 	noAPIServerJob := func() bool { return false }
 	apiServerHasJob := func() bool { return true }
 
 	DescribeTable("returns the correct action",
-		func(jobs []v1alpha1.JobStatus, desiredVersion string, reconciledVersion string, checkAPIServer func() bool, expectedAction provisionAction) {
-			state := &provisionState{
+		func(jobs []v1alpha1.JobStatus, desiredVersion string, reconciledVersion string, checkAPIServer func() bool, expectedAction provisioning.Action) {
+			state := &provisioning.State{
 				Jobs:                    &jobs,
 				DesiredConfigVersion:    desiredVersion,
 				ReconciledConfigVersion: reconciledVersion,
 			}
-			action, _ := evaluateProvisionAction(state, checkAPIServer)
+			action, _ := provisioning.EvaluateAction(state, checkAPIServer)
 			Expect(action).To(Equal(expectedAction))
 		},
 
@@ -45,21 +47,21 @@ var _ = Describe("evaluateProvisionAction", func() {
 			[]v1alpha1.JobStatus{},
 			"v1", "v1",
 			noAPIServerJob,
-			provisionSkip,
+			provisioning.Skip,
 		),
 
 		Entry("no jobs, versions differ -> trigger",
 			[]v1alpha1.JobStatus{},
 			"v2", "v1",
 			noAPIServerJob,
-			provisionTrigger,
+			provisioning.Trigger,
 		),
 
 		Entry("no jobs, versions differ, API server has job -> requeue",
 			[]v1alpha1.JobStatus{},
 			"v2", "v1",
 			apiServerHasJob,
-			provisionRequeue,
+			provisioning.Requeue,
 		),
 
 		Entry("running job -> poll",
@@ -68,7 +70,7 @@ var _ = Describe("evaluateProvisionAction", func() {
 			},
 			"v1", "",
 			noAPIServerJob,
-			provisionPoll,
+			provisioning.Poll,
 		),
 
 		Entry("succeeded job with matching config version -> skip",
@@ -77,7 +79,7 @@ var _ = Describe("evaluateProvisionAction", func() {
 			},
 			"v1", "",
 			noAPIServerJob,
-			provisionSkip,
+			provisioning.Skip,
 		),
 
 		Entry("failed job with matching config version -> backoff",
@@ -86,7 +88,7 @@ var _ = Describe("evaluateProvisionAction", func() {
 			},
 			"v1", "",
 			noAPIServerJob,
-			provisionBackoff,
+			provisioning.Backoff,
 		),
 
 		Entry("failed job with different config version -> trigger",
@@ -95,7 +97,7 @@ var _ = Describe("evaluateProvisionAction", func() {
 			},
 			"v2", "",
 			noAPIServerJob,
-			provisionTrigger,
+			provisioning.Trigger,
 		),
 
 		Entry("terminal job without config version, versions match -> skip",
@@ -104,7 +106,7 @@ var _ = Describe("evaluateProvisionAction", func() {
 			},
 			"v1", "v1",
 			noAPIServerJob,
-			provisionSkip,
+			provisioning.Skip,
 		),
 
 		Entry("terminal job without config version, versions differ -> trigger",
@@ -113,7 +115,7 @@ var _ = Describe("evaluateProvisionAction", func() {
 			},
 			"v2", "v1",
 			noAPIServerJob,
-			provisionTrigger,
+			provisioning.Trigger,
 		),
 
 		Entry("job with empty ID (trigger failed) and versions differ -> trigger",
@@ -122,41 +124,41 @@ var _ = Describe("evaluateProvisionAction", func() {
 			},
 			"v2", "v1",
 			noAPIServerJob,
-			provisionTrigger,
+			provisioning.Trigger,
 		),
 	)
 })
 
-var _ = Describe("computeDesiredConfigVersion", func() {
+var _ = Describe("provisioning.ComputeDesiredConfigVersion", func() {
 	It("produces consistent hashes for the same input", func() {
 		spec := map[string]string{"key": "value"}
-		v1, err := computeDesiredConfigVersion(spec)
+		v1, err := provisioning.ComputeDesiredConfigVersion(spec)
 		Expect(err).NotTo(HaveOccurred())
-		v2, err := computeDesiredConfigVersion(spec)
+		v2, err := provisioning.ComputeDesiredConfigVersion(spec)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v1).To(Equal(v2))
 	})
 
 	It("produces different hashes for different inputs", func() {
-		v1, err := computeDesiredConfigVersion(map[string]string{"key": "a"})
+		v1, err := provisioning.ComputeDesiredConfigVersion(map[string]string{"key": "a"})
 		Expect(err).NotTo(HaveOccurred())
-		v2, err := computeDesiredConfigVersion(map[string]string{"key": "b"})
+		v2, err := provisioning.ComputeDesiredConfigVersion(map[string]string{"key": "b"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v1).NotTo(Equal(v2))
 	})
 })
 
-var _ = Describe("syncReconciledConfigVersion", func() {
+var _ = Describe("provisioning.SyncReconciledConfigVersion", func() {
 	It("returns the annotation value when present", func() {
 		annotations := map[string]string{osacReconciledConfigVersionAnnotation: "v1"}
-		Expect(syncReconciledConfigVersion(ctx, annotations)).To(Equal("v1"))
+		Expect(provisioning.SyncReconciledConfigVersion(ctx, annotations, osacReconciledConfigVersionAnnotation)).To(Equal("v1"))
 	})
 
 	It("returns empty string when annotation is absent", func() {
-		Expect(syncReconciledConfigVersion(ctx, map[string]string{})).To(BeEmpty())
+		Expect(provisioning.SyncReconciledConfigVersion(ctx, map[string]string{}, osacReconciledConfigVersionAnnotation)).To(BeEmpty())
 	})
 
 	It("returns empty string when annotations map is nil", func() {
-		Expect(syncReconciledConfigVersion(ctx, nil)).To(BeEmpty())
+		Expect(provisioning.SyncReconciledConfigVersion(ctx, nil, osacReconciledConfigVersionAnnotation)).To(BeEmpty())
 	})
 })
