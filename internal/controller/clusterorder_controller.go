@@ -626,10 +626,7 @@ func (r *ClusterOrderReconciler) handleDeprovisioning(ctx context.Context, insta
 				if latestProvisionJob != nil {
 					updatedJob := *latestProvisionJob
 					updatedJob.State = result.ProvisionJobStatus.State
-					updatedJob.Message = result.ProvisionJobStatus.Message
-					if result.ProvisionJobStatus.ErrorDetails != "" {
-						updatedJob.Message = fmt.Sprintf("%s: %s", updatedJob.Message, result.ProvisionJobStatus.ErrorDetails)
-					}
+					updatedJob.Message = result.ProvisionJobStatus.MessageWithDetails()
 					provisioning.UpdateJob(instance.Status.Jobs, updatedJob)
 				}
 			}
@@ -643,10 +640,7 @@ func (r *ClusterOrderReconciler) handleDeprovisioning(ctx context.Context, insta
 				if latestProvisionJob != nil {
 					updatedJob := *latestProvisionJob
 					updatedJob.State = result.ProvisionJobStatus.State
-					updatedJob.Message = result.ProvisionJobStatus.Message
-					if result.ProvisionJobStatus.ErrorDetails != "" {
-						updatedJob.Message = fmt.Sprintf("%s: %s", updatedJob.Message, result.ProvisionJobStatus.ErrorDetails)
-					}
+					updatedJob.Message = result.ProvisionJobStatus.MessageWithDetails()
 					provisioning.UpdateJob(instance.Status.Jobs, updatedJob)
 				}
 			}
@@ -681,10 +675,7 @@ func (r *ClusterOrderReconciler) handleDeprovisioning(ctx context.Context, insta
 			log.Info("deprovision job status changed", "jobID", latestDeprovisionJob.JobID, "oldState", latestDeprovisionJob.State, "newState", status.State)
 			updatedJob := *latestDeprovisionJob
 			updatedJob.State = status.State
-			updatedJob.Message = status.Message
-			if status.ErrorDetails != "" {
-				updatedJob.Message = fmt.Sprintf("%s: %s", updatedJob.Message, status.ErrorDetails)
-			}
+			updatedJob.Message = status.MessageWithDetails()
 			provisioning.UpdateJob(instance.Status.Jobs, updatedJob)
 		}
 

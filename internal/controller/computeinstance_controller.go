@@ -467,10 +467,7 @@ func (r *ComputeInstanceReconciler) handleDeprovisioning(ctx context.Context, in
 	// Update job status
 	updatedJob := *latestDeprovisionJob
 	updatedJob.State = status.State
-	updatedJob.Message = status.Message
-	if status.ErrorDetails != "" {
-		updatedJob.Message = fmt.Sprintf("%s: %s", status.Message, status.ErrorDetails)
-	}
+	updatedJob.Message = status.MessageWithDetails()
 	provisioning.UpdateJob(instance.Status.Jobs, updatedJob)
 
 	// If job is still running, requeue

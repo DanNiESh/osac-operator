@@ -154,10 +154,7 @@ func PollJob(ctx context.Context, provider ProvisioningProvider, resource client
 		log.Info("provision job status changed", "jobID", latestJob.JobID, "oldState", latestJob.State, "newState", status.State)
 		updatedJob := *latestJob
 		updatedJob.State = status.State
-		updatedJob.Message = status.Message
-		if status.ErrorDetails != "" {
-			updatedJob.Message = fmt.Sprintf("%s: %s", status.Message, status.ErrorDetails)
-		}
+		updatedJob.Message = status.MessageWithDetails()
 		UpdateJob(*provState.Jobs, updatedJob)
 
 		if status.State == v1alpha1.JobStateFailed {

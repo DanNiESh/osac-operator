@@ -282,10 +282,7 @@ func (r *VirtualNetworkReconciler) handleDeprovisioning(ctx context.Context, vne
 	// Update job status
 	updatedJob := *latestDeprovisionJob
 	updatedJob.State = status.State
-	updatedJob.Message = status.Message
-	if status.ErrorDetails != "" {
-		updatedJob.Message = fmt.Sprintf("%s: %s", status.Message, status.ErrorDetails)
-	}
+	updatedJob.Message = status.MessageWithDetails()
 	provisioning.UpdateJob(vnet.Status.Jobs, updatedJob)
 
 	// If job is still running, requeue

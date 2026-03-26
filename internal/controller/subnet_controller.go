@@ -320,10 +320,7 @@ func (r *SubnetReconciler) handleDeprovisioning(ctx context.Context, subnet *v1a
 	// Update job status
 	updatedJob := *latestDeprovisionJob
 	updatedJob.State = status.State
-	updatedJob.Message = status.Message
-	if status.ErrorDetails != "" {
-		updatedJob.Message = fmt.Sprintf("%s: %s", status.Message, status.ErrorDetails)
-	}
+	updatedJob.Message = status.MessageWithDetails()
 	provisioning.UpdateJob(subnet.Status.Jobs, updatedJob)
 
 	// If job is still running, requeue

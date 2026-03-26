@@ -229,10 +229,7 @@ func (r *SecurityGroupReconciler) handleProvisioning(ctx context.Context, sg *v1
 	// Update job status
 	updatedJob := *latestProvisionJob
 	updatedJob.State = status.State
-	updatedJob.Message = status.Message
-	if status.ErrorDetails != "" {
-		updatedJob.Message = fmt.Sprintf("%s: %s", status.Message, status.ErrorDetails)
-	}
+	updatedJob.Message = status.MessageWithDetails()
 	provisioning.UpdateJob(sg.Status.Jobs, updatedJob)
 
 	// If job is still running, requeue
@@ -317,10 +314,7 @@ func (r *SecurityGroupReconciler) handleDeprovisioning(ctx context.Context, sg *
 	// Update job status
 	updatedJob := *latestDeprovisionJob
 	updatedJob.State = status.State
-	updatedJob.Message = status.Message
-	if status.ErrorDetails != "" {
-		updatedJob.Message = fmt.Sprintf("%s: %s", status.Message, status.ErrorDetails)
-	}
+	updatedJob.Message = status.MessageWithDetails()
 	provisioning.UpdateJob(sg.Status.Jobs, updatedJob)
 
 	// If job is still running, requeue
