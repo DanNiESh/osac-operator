@@ -627,6 +627,9 @@ func (r *ClusterOrderReconciler) handleDeprovisioning(ctx context.Context, insta
 					updatedJob := *latestProvisionJob
 					updatedJob.State = result.ProvisionJobStatus.State
 					updatedJob.Message = result.ProvisionJobStatus.Message
+					if result.ProvisionJobStatus.ErrorDetails != "" {
+						updatedJob.Message = fmt.Sprintf("%s: %s", updatedJob.Message, result.ProvisionJobStatus.ErrorDetails)
+					}
 					provisioning.UpdateJob(instance.Status.Jobs, updatedJob)
 				}
 			}
@@ -641,6 +644,9 @@ func (r *ClusterOrderReconciler) handleDeprovisioning(ctx context.Context, insta
 					updatedJob := *latestProvisionJob
 					updatedJob.State = result.ProvisionJobStatus.State
 					updatedJob.Message = result.ProvisionJobStatus.Message
+					if result.ProvisionJobStatus.ErrorDetails != "" {
+						updatedJob.Message = fmt.Sprintf("%s: %s", updatedJob.Message, result.ProvisionJobStatus.ErrorDetails)
+					}
 					provisioning.UpdateJob(instance.Status.Jobs, updatedJob)
 				}
 			}
@@ -676,6 +682,9 @@ func (r *ClusterOrderReconciler) handleDeprovisioning(ctx context.Context, insta
 			updatedJob := *latestDeprovisionJob
 			updatedJob.State = status.State
 			updatedJob.Message = status.Message
+			if status.ErrorDetails != "" {
+				updatedJob.Message = fmt.Sprintf("%s: %s", updatedJob.Message, status.ErrorDetails)
+			}
 			provisioning.UpdateJob(instance.Status.Jobs, updatedJob)
 		}
 
