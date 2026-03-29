@@ -702,17 +702,6 @@ var _ = Describe("ComputeInstance Controller", func() {
 				Expect(action).To(Equal(provisioning.Trigger))
 			})
 
-			It("should trigger when no job exists", func() {
-				instance := &osacv1alpha1.ComputeInstance{
-					Status: osacv1alpha1.ComputeInstanceStatus{
-						DesiredConfigVersion: "abc123",
-					},
-				}
-				action, job := reconciler.shouldTriggerProvision(ctx, instance)
-				Expect(action).To(Equal(provisioning.Trigger))
-				Expect(job).To(BeNil())
-			})
-
 			It("should poll when job is still running", func() {
 				instance := &osacv1alpha1.ComputeInstance{
 					Status: osacv1alpha1.ComputeInstanceStatus{

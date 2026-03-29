@@ -367,6 +367,11 @@ func (r *ComputeInstanceReconciler) handleProvisioning(ctx context.Context, inst
 					instance.Status.Phase = v1alpha1.ComputeInstancePhaseFailed
 				}
 			},
+			IsCompleted: func() bool {
+				// EDA's GetProvisionStatus always returns Unknown.
+				// Detect completion by checking if the VM was created on the cluster.
+				return provisioning.IsEDAJobID(latestProvisionJob.JobID) && instance.Status.VirtualMachineReference != nil
+			},
 		})
 	}
 }

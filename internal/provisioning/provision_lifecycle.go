@@ -131,8 +131,12 @@ func TriggerJob(ctx context.Context, provider ProvisioningProvider, resource cli
 type PollCallbacks struct {
 	// OnFailed is called when the job transitions to Failed state.
 	OnFailed func(message string)
-	// OnSuccess is called when the job succeeds (e.g. to update ReconciledVersion).
+	// OnSuccess is called when the job succeeds.
 	OnSuccess func(status ProvisionStatus)
+	// IsCompleted is called when the provider returns a non-terminal state.
+	// If it returns true, the job is marked as succeeded and polling stops.
+	// Used by EDA provider where GetProvisionStatus always returns Unknown.
+	IsCompleted func() bool
 }
 
 // PollJob checks the status of an existing provision job and updates the jobs slice in place.
@@ -165,6 +169,16 @@ func PollJob(ctx context.Context, provider ProvisioningProvider, resource client
 	}
 
 	if !status.State.IsTerminal() {
+		// Check if an external signal indicates completion (e.g., EDA where
+		// GetProvisionStatus always returns Unknown but the VM was created).
+		if callbacks != nil && callbacks.IsCompleted != nil && callbacks.IsCompleted() {
+			log.Info("provision job completed via external signal", "jobID", latestJob.JobID)
+			updatedJob := *latestJob
+			updatedJob.State = v1alpha1.JobStateSucceeded
+			updatedJob.Message = "provision completed"
+			UpdateJob(*provState.Jobs, updatedJob)
+			return ctrl.Result{}, nil
+		}
 		return ctrl.Result{RequeueAfter: pollInterval}, nil
 	}
 
