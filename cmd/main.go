@@ -294,7 +294,7 @@ func createProvider(
 }
 
 // createProviderFromEnv creates a provisioning provider by reading shared env vars
-// and optional per-resource-type template overrides. Defaults to EDA when no
+// and optional per-resource-type template overrides. Defaults to AAP direct when no
 // provider type is configured.
 func createProviderFromEnv(
 	provisionWebhookEnv, deprovisionWebhookEnv string,
@@ -303,7 +303,7 @@ func createProviderFromEnv(
 ) (provisioning.ProvisioningProvider, time.Duration, error) {
 	providerType := provisioning.ProviderType(os.Getenv(envProvisioningProvider))
 	if providerType == "" {
-		providerType = provisioning.ProviderTypeEDA
+		providerType = provisioning.ProviderTypeAAP
 	}
 	provisionWebhook := os.Getenv(provisionWebhookEnv)
 	deprovisionWebhook := os.Getenv(deprovisionWebhookEnv)
