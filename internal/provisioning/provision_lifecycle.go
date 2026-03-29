@@ -280,6 +280,9 @@ func PollDeprovisionJob(ctx context.Context, provider ProvisioningProvider, reso
 	status, err := provider.GetDeprovisionStatus(ctx, resource, latestDeprovisionJob.JobID)
 	if err != nil {
 		log.Error(err, "failed to get deprovision status", "jobID", latestDeprovisionJob.JobID)
+		updatedJob := *latestDeprovisionJob
+		updatedJob.Message = fmt.Sprintf("Failed to get deprovision status: %v", err)
+		UpdateJob(*jobs, updatedJob)
 		return ctrl.Result{RequeueAfter: pollInterval}, false, nil
 	}
 
