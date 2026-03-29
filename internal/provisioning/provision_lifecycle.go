@@ -61,7 +61,10 @@ func EvaluateAction(provState *State, checkAPIServer func() bool) (Action, *v1al
 	latestJob := FindLatestJobByType(*provState.Jobs, v1alpha1.JobTypeProvision)
 
 	if !HasJobID(latestJob) {
-		// No provision job exists — trigger one
+		// No provision job exists — trigger one.
+		// This is intentional: resources without job history (new, imported, or trimmed by
+		// maxJobHistory) should be provisioned. With AAP direct, job tracking is the source
+		// of truth; the old annotation-based skip path has been removed.
 	} else if !latestJob.State.IsTerminal() {
 		return Poll, latestJob
 	} else if latestJob.ConfigVersion == provState.DesiredConfigVersion {
@@ -173,13 +176,16 @@ func PollJob(ctx context.Context, provider ProvisioningProvider, resource client
 
 // IsConfigApplied returns true if the latest provision job succeeded with a ConfigVersion
 // matching the desired version, indicating the current spec has been applied.
+// Also returns true for legacy jobs (empty ConfigVersion) that succeeded, to avoid
+// re-triggering provisioning for resources provisioned before ConfigVersion tracking.
 func IsConfigApplied(jobs *[]v1alpha1.JobStatus, desiredConfigVersion string) bool {
 	latestJob := FindLatestJobByType(*jobs, v1alpha1.JobTypeProvision)
-	if latestJob == nil {
+	if latestJob == nil || latestJob.State != v1alpha1.JobStateSucceeded {
 		return false
 	}
-	if latestJob.State != v1alpha1.JobStateSucceeded {
-		return false
+	// Legacy job without ConfigVersion — treat as applied
+	if latestJob.ConfigVersion == "" {
+		return true
 	}
 	return latestJob.ConfigVersion == desiredConfigVersion
 }
