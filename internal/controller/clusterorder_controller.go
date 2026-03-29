@@ -597,102 +597,21 @@ func (r *ClusterOrderReconciler) handleDeprovisioning(ctx context.Context, insta
 		return ctrl.Result{}, nil
 	}
 
-	// Check if deprovision job already exists
 	latestDeprovisionJob := provisioning.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeDeprovision)
 
-	// If no deprovision job exists, trigger one
 	if !provisioning.HasJobID(latestDeprovisionJob) {
-		log.Info("triggering deprovision job")
-		result, err := r.ProvisioningProvider.TriggerDeprovision(ctx, instance)
-		if err != nil {
-			if rateLimitErr, ok := provisioning.AsRateLimitError(err); ok {
-				log.Info("deprovision request rate-limited, requeueing", "retryAfter", rateLimitErr.RetryAfter)
-				return ctrl.Result{RequeueAfter: rateLimitErr.RetryAfter}, nil
-			}
-			return ctrl.Result{}, fmt.Errorf("failed to trigger deprovision: %w", err)
-		}
-
-		// Handle different deprovision actions
-		switch result.Action {
-		case provisioning.DeprovisionSkipped:
-			log.Info("deprovisioning skipped by provider")
-			return ctrl.Result{}, nil
-
-		case provisioning.DeprovisionWaiting:
-			log.Info("waiting for provision job to terminate before deprovisioning")
-			// Update provision job status if provided
-			if result.ProvisionJobStatus != nil {
-				latestProvisionJob := provisioning.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
-				if latestProvisionJob != nil {
-					updatedJob := *latestProvisionJob
-					updatedJob.State = result.ProvisionJobStatus.State
-					updatedJob.Message = result.ProvisionJobStatus.MessageWithDetails()
-					provisioning.UpdateJob(instance.Status.Jobs, updatedJob)
-				}
-			}
-			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
-
-		case provisioning.DeprovisionTriggered:
-			log.Info("deprovision job triggered", "jobID", result.JobID)
-			// Update provision job status if provided
-			if result.ProvisionJobStatus != nil {
-				latestProvisionJob := provisioning.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
-				if latestProvisionJob != nil {
-					updatedJob := *latestProvisionJob
-					updatedJob.State = result.ProvisionJobStatus.State
-					updatedJob.Message = result.ProvisionJobStatus.MessageWithDetails()
-					provisioning.UpdateJob(instance.Status.Jobs, updatedJob)
-				}
-			}
-			// Append deprovision job
-			instance.Status.Jobs = provisioning.AppendJob(instance.Status.Jobs, v1alpha1.JobStatus{
-				JobID:                  result.JobID,
-				Type:                   v1alpha1.JobTypeDeprovision,
-				State:                  v1alpha1.JobStatePending,
-				Message:                "Deprovision job triggered",
-				Timestamp:              metav1.NewTime(time.Now().UTC()),
-				BlockDeletionOnFailure: result.BlockDeletionOnFailure,
-			}, r.MaxJobHistory)
-			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
-
-		default:
-			return ctrl.Result{}, fmt.Errorf("unknown deprovision action: %v", result.Action)
-		}
+		return provisioning.TriggerDeprovisionJob(ctx, r.ProvisioningProvider, instance,
+			&instance.Status.Jobs, r.MaxJobHistory, r.StatusPollInterval)
 	}
 
-	// Poll existing deprovision job status
-	if !latestDeprovisionJob.State.IsTerminal() {
-		log.Info("polling deprovision job status", "jobID", latestDeprovisionJob.JobID, "currentState", latestDeprovisionJob.State)
-		status, err := r.ProvisioningProvider.GetDeprovisionStatus(ctx, instance, latestDeprovisionJob.JobID)
-		if err != nil {
-			log.Error(err, "failed to get deprovision status", "jobID", latestDeprovisionJob.JobID)
-			// Don't block on polling errors, just requeue
-			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
-		}
-
-		// Update job status if changed
-		if status.State != latestDeprovisionJob.State || status.Message != latestDeprovisionJob.Message {
-			log.Info("deprovision job status changed", "jobID", latestDeprovisionJob.JobID, "oldState", latestDeprovisionJob.State, "newState", status.State)
-			updatedJob := *latestDeprovisionJob
-			updatedJob.State = status.State
-			updatedJob.Message = status.MessageWithDetails()
-			provisioning.UpdateJob(instance.Status.Jobs, updatedJob)
-		}
-
-		// Continue polling if still running
-		if !status.State.IsTerminal() {
-			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
-		}
-
-		// Job reached terminal state
-		if !status.State.IsSuccessful() && latestDeprovisionJob.BlockDeletionOnFailure {
-			log.Info("deprovision job failed, blocking deletion to prevent orphaned resources",
-				"jobID", latestDeprovisionJob.JobID, "state", status.State)
-			return ctrl.Result{RequeueAfter: r.StatusPollInterval}, nil
-		}
+	result, done, err := provisioning.PollDeprovisionJob(ctx, r.ProvisioningProvider, instance,
+		&instance.Status.Jobs, latestDeprovisionJob, r.StatusPollInterval)
+	if err != nil {
+		return result, err
 	}
-
-	// Job is terminal and successful (or not blocking), proceed with deletion
+	if !done {
+		return result, nil
+	}
 	return ctrl.Result{}, nil
 }
 
