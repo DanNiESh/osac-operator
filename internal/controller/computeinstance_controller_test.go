@@ -346,94 +346,6 @@ var _ = Describe("ComputeInstance Controller", func() {
 		})
 	})
 
-	Context("handleReconciledConfigVersion", func() {
-		var reconciler *ComputeInstanceReconciler
-		ctx := context.Background()
-
-		BeforeEach(func() {
-			reconciler = NewComputeInstanceReconciler(testMcManager, "", "", &mockProvisioningProvider{}, 0, 0, mcmanager.LocalCluster)
-		})
-
-		It("should copy annotation to status when annotation exists", func() {
-			expectedVersion := "test-version-value-12345"
-			vm := &osacv1alpha1.ComputeInstance{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ci-current",
-					Namespace: "default",
-					Annotations: map[string]string{
-						osacAAPReconciledConfigVersionAnnotation: expectedVersion,
-					},
-				},
-				Spec: newTestComputeInstanceSpec("template-1"),
-			}
-
-			err := reconciler.handleReconciledConfigVersion(ctx, vm)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(vm.Status.ReconciledConfigVersion).To(Equal(expectedVersion))
-		})
-
-		It("should clear status when annotation does not exist", func() {
-			vm := &osacv1alpha1.ComputeInstance{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        "test-ci-no-annotation",
-					Namespace:   "default",
-					Annotations: map[string]string{},
-				},
-				Spec: newTestComputeInstanceSpec("template-1"),
-				Status: osacv1alpha1.ComputeInstanceStatus{
-					ReconciledConfigVersion: "some-old-version",
-				},
-			}
-
-			err := reconciler.handleReconciledConfigVersion(ctx, vm)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(vm.Status.ReconciledConfigVersion).To(BeEmpty())
-		})
-
-		It("should clear status when annotations map is nil", func() {
-			vm := &osacv1alpha1.ComputeInstance{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ci-nil-annotations",
-					Namespace: "default",
-				},
-				Spec: newTestComputeInstanceSpec("template-1"),
-				Status: osacv1alpha1.ComputeInstanceStatus{
-					ReconciledConfigVersion: "some-old-version",
-				},
-			}
-
-			err := reconciler.handleReconciledConfigVersion(ctx, vm)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(vm.Status.ReconciledConfigVersion).To(BeEmpty())
-		})
-
-		It("should update status when annotation value changes", func() {
-			vm := &osacv1alpha1.ComputeInstance{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ci-update",
-					Namespace: "default",
-					Annotations: map[string]string{
-						osacAAPReconciledConfigVersionAnnotation: "version-1",
-					},
-				},
-				Spec: newTestComputeInstanceSpec("template-1"),
-			}
-
-			// First call
-			err := reconciler.handleReconciledConfigVersion(ctx, vm)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(vm.Status.ReconciledConfigVersion).To(Equal("version-1"))
-
-			// Update annotation
-			vm.Annotations[osacAAPReconciledConfigVersionAnnotation] = "version-2"
-
-			// Second call
-			err = reconciler.handleReconciledConfigVersion(ctx, vm)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(vm.Status.ReconciledConfigVersion).To(Equal("version-2"))
-		})
-	})
-
 	Context("Helper functions", func() {
 		Describe("provisioning.FindJobByID", func() {
 			It("should return nil when jobs slice is empty", func() {
@@ -790,15 +702,14 @@ var _ = Describe("ComputeInstance Controller", func() {
 				Expect(action).To(Equal(provisioning.Trigger))
 			})
 
-			It("should skip when no job exists and config versions match", func() {
+			It("should trigger when no job exists", func() {
 				instance := &osacv1alpha1.ComputeInstance{
 					Status: osacv1alpha1.ComputeInstanceStatus{
-						DesiredConfigVersion:    "abc123",
-						ReconciledConfigVersion: "abc123",
+						DesiredConfigVersion: "abc123",
 					},
 				}
 				action, job := reconciler.shouldTriggerProvision(ctx, instance)
-				Expect(action).To(Equal(provisioning.Skip))
+				Expect(action).To(Equal(provisioning.Trigger))
 				Expect(job).To(BeNil())
 			})
 
@@ -825,12 +736,11 @@ var _ = Describe("ComputeInstance Controller", func() {
 				Expect(job).NotTo(BeNil())
 			})
 
-			It("should skip when job succeeded and config versions match", func() {
+			It("should skip when job succeeded with matching ConfigVersion", func() {
 				instance := &osacv1alpha1.ComputeInstance{
 					Status: osacv1alpha1.ComputeInstanceStatus{
-						DesiredConfigVersion:    "abc123",
-						ReconciledConfigVersion: "abc123",
-						Jobs:                    []osacv1alpha1.JobStatus{{Type: osacv1alpha1.JobTypeProvision, JobID: "job-1", State: osacv1alpha1.JobStateSucceeded}},
+						DesiredConfigVersion: "abc123",
+						Jobs:                 []osacv1alpha1.JobStatus{{Type: osacv1alpha1.JobTypeProvision, JobID: "job-1", State: osacv1alpha1.JobStateSucceeded, ConfigVersion: "abc123"}},
 					},
 				}
 				action, job := reconciler.shouldTriggerProvision(ctx, instance)
@@ -838,12 +748,11 @@ var _ = Describe("ComputeInstance Controller", func() {
 				Expect(job).NotTo(BeNil())
 			})
 
-			It("should trigger when job succeeded but config versions differ", func() {
+			It("should trigger when job succeeded but ConfigVersion differs", func() {
 				instance := &osacv1alpha1.ComputeInstance{
 					Status: osacv1alpha1.ComputeInstanceStatus{
-						DesiredConfigVersion:    "new-version",
-						ReconciledConfigVersion: "old-version",
-						Jobs:                    []osacv1alpha1.JobStatus{{Type: osacv1alpha1.JobTypeProvision, JobID: "job-1", State: osacv1alpha1.JobStateSucceeded}},
+						DesiredConfigVersion: "new-version",
+						Jobs:                 []osacv1alpha1.JobStatus{{Type: osacv1alpha1.JobTypeProvision, JobID: "job-1", State: osacv1alpha1.JobStateSucceeded, ConfigVersion: "old-version"}},
 					},
 				}
 				action, job := reconciler.shouldTriggerProvision(ctx, instance)
@@ -851,12 +760,11 @@ var _ = Describe("ComputeInstance Controller", func() {
 				Expect(job).NotTo(BeNil())
 			})
 
-			It("should trigger when job failed and config versions differ", func() {
+			It("should trigger when job failed with different ConfigVersion", func() {
 				instance := &osacv1alpha1.ComputeInstance{
 					Status: osacv1alpha1.ComputeInstanceStatus{
-						DesiredConfigVersion:    "new-version",
-						ReconciledConfigVersion: "old-version",
-						Jobs:                    []osacv1alpha1.JobStatus{{Type: osacv1alpha1.JobTypeProvision, JobID: "job-1", State: osacv1alpha1.JobStateFailed}},
+						DesiredConfigVersion: "new-version",
+						Jobs:                 []osacv1alpha1.JobStatus{{Type: osacv1alpha1.JobTypeProvision, JobID: "job-1", State: osacv1alpha1.JobStateFailed, ConfigVersion: "old-version"}},
 					},
 				}
 				action, job := reconciler.shouldTriggerProvision(ctx, instance)
@@ -864,16 +772,15 @@ var _ = Describe("ComputeInstance Controller", func() {
 				Expect(job).NotTo(BeNil())
 			})
 
-			It("should skip when job failed but config versions match", func() {
+			It("should backoff when job failed with matching ConfigVersion", func() {
 				instance := &osacv1alpha1.ComputeInstance{
 					Status: osacv1alpha1.ComputeInstanceStatus{
-						DesiredConfigVersion:    "abc123",
-						ReconciledConfigVersion: "abc123",
-						Jobs:                    []osacv1alpha1.JobStatus{{Type: osacv1alpha1.JobTypeProvision, JobID: "job-1", State: osacv1alpha1.JobStateFailed}},
+						DesiredConfigVersion: "abc123",
+						Jobs:                 []osacv1alpha1.JobStatus{{Type: osacv1alpha1.JobTypeProvision, JobID: "job-1", State: osacv1alpha1.JobStateFailed, ConfigVersion: "abc123"}},
 					},
 				}
 				action, job := reconciler.shouldTriggerProvision(ctx, instance)
-				Expect(action).To(Equal(provisioning.Skip))
+				Expect(action).To(Equal(provisioning.Backoff))
 				Expect(job).NotTo(BeNil())
 			})
 
@@ -952,9 +859,8 @@ var _ = Describe("ComputeInstance Controller", func() {
 				oldJobTimestamp := metav1.NewTime(time.Now().UTC().Add(-time.Minute))
 				newJobTimestamp := metav1.NewTime(time.Now().UTC())
 				apiInstance.Status.DesiredConfigVersion = "v2"
-				apiInstance.Status.ReconciledConfigVersion = "v1"
 				apiInstance.Status.Jobs = []osacv1alpha1.JobStatus{
-					{Type: osacv1alpha1.JobTypeProvision, JobID: "old-job", State: osacv1alpha1.JobStateSucceeded, Timestamp: oldJobTimestamp},
+					{Type: osacv1alpha1.JobTypeProvision, JobID: "old-job", State: osacv1alpha1.JobStateSucceeded, ConfigVersion: "v1", Timestamp: oldJobTimestamp},
 					{Type: osacv1alpha1.JobTypeProvision, JobID: "new-running-job", State: osacv1alpha1.JobStateRunning, Timestamp: newJobTimestamp},
 				}
 				Expect(k8sClient.Status().Update(ctx, apiInstance)).To(Succeed())
@@ -966,10 +872,9 @@ var _ = Describe("ComputeInstance Controller", func() {
 						Namespace: "default",
 					},
 					Status: osacv1alpha1.ComputeInstanceStatus{
-						DesiredConfigVersion:    "v2",
-						ReconciledConfigVersion: "v1",
+						DesiredConfigVersion: "v2",
 						Jobs: []osacv1alpha1.JobStatus{
-							{Type: osacv1alpha1.JobTypeProvision, JobID: "old-job", State: osacv1alpha1.JobStateSucceeded},
+							{Type: osacv1alpha1.JobTypeProvision, JobID: "old-job", State: osacv1alpha1.JobStateSucceeded, ConfigVersion: "v1"},
 						},
 					},
 				}
@@ -996,23 +901,21 @@ var _ = Describe("ComputeInstance Controller", func() {
 
 				jobTimestamp := metav1.NewTime(time.Now().UTC())
 				apiInstance.Status.DesiredConfigVersion = "v2"
-				apiInstance.Status.ReconciledConfigVersion = "v1"
 				apiInstance.Status.Jobs = []osacv1alpha1.JobStatus{
-					{Type: osacv1alpha1.JobTypeProvision, JobID: "done-job", State: osacv1alpha1.JobStateSucceeded, Timestamp: jobTimestamp},
+					{Type: osacv1alpha1.JobTypeProvision, JobID: "done-job", State: osacv1alpha1.JobStateSucceeded, ConfigVersion: "v1", Timestamp: jobTimestamp},
 				}
 				Expect(k8sClient.Status().Update(ctx, apiInstance)).To(Succeed())
 
-				// In-memory instance matches API server — terminal job, versions differ
+				// In-memory instance matches API server — terminal job, ConfigVersion differs from desired
 				staleInstance := &osacv1alpha1.ComputeInstance{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      instanceName,
 						Namespace: "default",
 					},
 					Status: osacv1alpha1.ComputeInstanceStatus{
-						DesiredConfigVersion:    "v2",
-						ReconciledConfigVersion: "v1",
+						DesiredConfigVersion: "v2",
 						Jobs: []osacv1alpha1.JobStatus{
-							{Type: osacv1alpha1.JobTypeProvision, JobID: "done-job", State: osacv1alpha1.JobStateSucceeded},
+							{Type: osacv1alpha1.JobTypeProvision, JobID: "done-job", State: osacv1alpha1.JobStateSucceeded, ConfigVersion: "v1"},
 						},
 					},
 				}
@@ -2024,7 +1927,6 @@ var _ = Describe("ComputeInstance Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Simulate provision completed: reconciled matches desired
-			instance.Status.ReconciledConfigVersion = instance.Status.DesiredConfigVersion
 
 			Expect(instance.Status.LastRestartedAt).To(BeNil())
 
@@ -2048,7 +1950,6 @@ var _ = Describe("ComputeInstance Controller", func() {
 
 			err := reconciler.handleDesiredConfigVersion(ctx, instance)
 			Expect(err).NotTo(HaveOccurred())
-			instance.Status.ReconciledConfigVersion = instance.Status.DesiredConfigVersion
 
 			// Same logic inline
 			if instance.Spec.RestartRequestedAt != nil {
@@ -2074,7 +1975,6 @@ var _ = Describe("ComputeInstance Controller", func() {
 
 			err := reconciler.handleDesiredConfigVersion(ctx, instance)
 			Expect(err).NotTo(HaveOccurred())
-			instance.Status.ReconciledConfigVersion = instance.Status.DesiredConfigVersion
 
 			originalLastRestarted := instance.Status.LastRestartedAt.DeepCopy()
 
@@ -2102,7 +2002,6 @@ var _ = Describe("ComputeInstance Controller", func() {
 
 			err := reconciler.handleDesiredConfigVersion(ctx, instance)
 			Expect(err).NotTo(HaveOccurred())
-			instance.Status.ReconciledConfigVersion = instance.Status.DesiredConfigVersion
 
 			if instance.Spec.RestartRequestedAt != nil {
 				if instance.Status.LastRestartedAt == nil || instance.Spec.RestartRequestedAt.After(instance.Status.LastRestartedAt.Time) {

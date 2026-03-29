@@ -124,15 +124,14 @@ var _ = Describe("ClusterOrder Controller", func() {
 			Expect(action).To(Equal(provisioning.Trigger))
 		})
 
-		It("should skip when no job exists and config versions match", func() {
+		It("should trigger when no job exists", func() {
 			instance := &v1alpha1.ClusterOrder{
 				Status: v1alpha1.ClusterOrderStatus{
-					DesiredConfigVersion:    "abc123",
-					ReconciledConfigVersion: "abc123",
+					DesiredConfigVersion: "abc123",
 				},
 			}
 			action, job := reconciler.shouldTriggerProvision(ctx, instance)
-			Expect(action).To(Equal(provisioning.Skip))
+			Expect(action).To(Equal(provisioning.Trigger))
 			Expect(job).To(BeNil())
 		})
 
@@ -159,12 +158,11 @@ var _ = Describe("ClusterOrder Controller", func() {
 			Expect(job).NotTo(BeNil())
 		})
 
-		It("should skip when job succeeded and config versions match", func() {
+		It("should skip when job succeeded with matching ConfigVersion", func() {
 			instance := &v1alpha1.ClusterOrder{
 				Status: v1alpha1.ClusterOrderStatus{
-					DesiredConfigVersion:    "abc123",
-					ReconciledConfigVersion: "abc123",
-					Jobs:                    []v1alpha1.JobStatus{{Type: v1alpha1.JobTypeProvision, JobID: "job-1", State: v1alpha1.JobStateSucceeded}},
+					DesiredConfigVersion: "abc123",
+					Jobs:                 []v1alpha1.JobStatus{{Type: v1alpha1.JobTypeProvision, JobID: "job-1", State: v1alpha1.JobStateSucceeded, ConfigVersion: "abc123"}},
 				},
 			}
 			action, job := reconciler.shouldTriggerProvision(ctx, instance)
@@ -172,12 +170,11 @@ var _ = Describe("ClusterOrder Controller", func() {
 			Expect(job).NotTo(BeNil())
 		})
 
-		It("should trigger when job succeeded but config versions differ", func() {
+		It("should trigger when job succeeded but ConfigVersion differs", func() {
 			instance := &v1alpha1.ClusterOrder{
 				Status: v1alpha1.ClusterOrderStatus{
-					DesiredConfigVersion:    "new-version",
-					ReconciledConfigVersion: "old-version",
-					Jobs:                    []v1alpha1.JobStatus{{Type: v1alpha1.JobTypeProvision, JobID: "job-1", State: v1alpha1.JobStateSucceeded}},
+					DesiredConfigVersion: "new-version",
+					Jobs:                 []v1alpha1.JobStatus{{Type: v1alpha1.JobTypeProvision, JobID: "job-1", State: v1alpha1.JobStateSucceeded, ConfigVersion: "old-version"}},
 				},
 			}
 			action, job := reconciler.shouldTriggerProvision(ctx, instance)
@@ -185,29 +182,15 @@ var _ = Describe("ClusterOrder Controller", func() {
 			Expect(job).NotTo(BeNil())
 		})
 
-		It("should trigger when job failed and config versions differ", func() {
+		It("should trigger when job failed with different ConfigVersion", func() {
 			instance := &v1alpha1.ClusterOrder{
 				Status: v1alpha1.ClusterOrderStatus{
-					DesiredConfigVersion:    "new-version",
-					ReconciledConfigVersion: "old-version",
-					Jobs:                    []v1alpha1.JobStatus{{Type: v1alpha1.JobTypeProvision, JobID: "job-1", State: v1alpha1.JobStateFailed}},
+					DesiredConfigVersion: "new-version",
+					Jobs:                 []v1alpha1.JobStatus{{Type: v1alpha1.JobTypeProvision, JobID: "job-1", State: v1alpha1.JobStateFailed, ConfigVersion: "old-version"}},
 				},
 			}
 			action, job := reconciler.shouldTriggerProvision(ctx, instance)
 			Expect(action).To(Equal(provisioning.Trigger))
-			Expect(job).NotTo(BeNil())
-		})
-
-		It("should skip when job failed without ConfigVersion and reconciled matches desired", func() {
-			instance := &v1alpha1.ClusterOrder{
-				Status: v1alpha1.ClusterOrderStatus{
-					DesiredConfigVersion:    "abc123",
-					ReconciledConfigVersion: "abc123",
-					Jobs:                    []v1alpha1.JobStatus{{Type: v1alpha1.JobTypeProvision, JobID: "job-1", State: v1alpha1.JobStateFailed}},
-				},
-			}
-			action, job := reconciler.shouldTriggerProvision(ctx, instance)
-			Expect(action).To(Equal(provisioning.Skip))
 			Expect(job).NotTo(BeNil())
 		})
 
@@ -414,31 +397,4 @@ var _ = Describe("ClusterOrder Controller", func() {
 		})
 	})
 
-	Context("handleReconciledConfigVersion", func() {
-		ctx := context.Background()
-
-		It("should copy version from annotation", func() {
-			reconciler := &ClusterOrderReconciler{}
-			instance := &v1alpha1.ClusterOrder{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{
-						osacReconciledConfigVersionAnnotation: "abc123",
-					},
-				},
-			}
-			reconciler.handleReconciledConfigVersion(ctx, instance)
-			Expect(instance.Status.ReconciledConfigVersion).To(Equal("abc123"))
-		})
-
-		It("should clear version when annotation missing", func() {
-			reconciler := &ClusterOrderReconciler{}
-			instance := &v1alpha1.ClusterOrder{
-				Status: v1alpha1.ClusterOrderStatus{
-					ReconciledConfigVersion: "old-version",
-				},
-			}
-			reconciler.handleReconciledConfigVersion(ctx, instance)
-			Expect(instance.Status.ReconciledConfigVersion).To(BeEmpty())
-		})
-	})
 })

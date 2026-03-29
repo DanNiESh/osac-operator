@@ -242,37 +242,11 @@ var _ = Describe("ClusterOrder Integration Tests", func() {
 			Expect(instance1.Status.DesiredConfigVersion).NotTo(Equal(instance2.Status.DesiredConfigVersion))
 		})
 
-		It("should copy reconciled config version from annotation", func() {
-			instance := newTestClusterOrder("cluster-order-reconciled-copy")
-			instance.Annotations = map[string]string{
-				osacReconciledConfigVersionAnnotation: "abc123",
-			}
-			reconciler.handleReconciledConfigVersion(ctx, instance)
-			Expect(instance.Status.ReconciledConfigVersion).To(Equal("abc123"))
-		})
-
-		It("should clear reconciled config version when annotation is missing", func() {
-			instance := newTestClusterOrder("cluster-order-reconciled-clear")
-			instance.Status.ReconciledConfigVersion = "old-version"
-			reconciler.handleReconciledConfigVersion(ctx, instance)
-			Expect(instance.Status.ReconciledConfigVersion).To(BeEmpty())
-		})
-
-		It("should skip provisioning when config versions match", func() {
+		It("should skip provisioning when latest job succeeded with matching ConfigVersion", func() {
 			instance := newTestClusterOrder("cluster-order-skip-match")
 			instance.Status.DesiredConfigVersion = "v1"
-			instance.Status.ReconciledConfigVersion = "v1"
-
-			action, _ := reconciler.shouldTriggerProvision(ctx, instance)
-			Expect(action).To(Equal(provisioning.Skip))
-		})
-
-		It("should skip provisioning after config versions match even with terminal job", func() {
-			instance := newTestClusterOrder("cluster-order-skip-terminal")
-			instance.Status.DesiredConfigVersion = "v1"
-			instance.Status.ReconciledConfigVersion = "v1"
 			instance.Status.Jobs = []osacv1alpha1.JobStatus{
-				{Type: osacv1alpha1.JobTypeProvision, JobID: "job-1", State: osacv1alpha1.JobStateSucceeded},
+				{Type: osacv1alpha1.JobTypeProvision, JobID: "job-1", State: osacv1alpha1.JobStateSucceeded, ConfigVersion: "v1"},
 			}
 
 			action, job := reconciler.shouldTriggerProvision(ctx, instance)

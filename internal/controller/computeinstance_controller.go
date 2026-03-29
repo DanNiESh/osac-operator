@@ -367,11 +367,6 @@ func (r *ComputeInstanceReconciler) handleProvisioning(ctx context.Context, inst
 					instance.Status.Phase = v1alpha1.ComputeInstancePhaseFailed
 				}
 			},
-			OnSuccess: func(status provisioning.ProvisionStatus) {
-				if status.ReconciledVersion != "" {
-					instance.Status.ReconciledConfigVersion = status.ReconciledVersion
-				}
-			},
 		})
 	}
 }
@@ -682,11 +677,7 @@ func (r *ComputeInstanceReconciler) handleUpdate(ctx context.Context, _ reconcil
 		return ctrl.Result{}, err
 	}
 
-	if err := r.handleReconciledConfigVersion(ctx, instance); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if instance.Status.DesiredConfigVersion == instance.Status.ReconciledConfigVersion {
+	if provisioning.IsConfigApplied(&instance.Status.Jobs, instance.Status.DesiredConfigVersion) {
 		// Phase is now driven by KubeVirt PrintableStatus, set above. Only update the condition.
 		instance.SetStatusCondition(v1alpha1.ComputeInstanceConditionConfigurationApplied, metav1.ConditionTrue, "", v1alpha1.ReasonAsExpected)
 
@@ -697,16 +688,6 @@ func (r *ComputeInstanceReconciler) handleUpdate(ctx context.Context, _ reconcil
 				instance.Status.LastRestartedAt = instance.Spec.RestartRequestedAt.DeepCopy()
 				instance.SetStatusCondition(v1alpha1.ComputeInstanceConditionRestartInProgress, metav1.ConditionFalse, "", v1alpha1.ReasonAsExpected)
 			}
-		}
-
-		// If we're tracking a provision job that hasn't reached terminal state, mark it as
-		// succeeded since config versions match — that's proof the provision completed.
-		// This is essential for EDA where GetProvisionStatus() always returns Unknown.
-		latestProvisionJob := provisioning.FindLatestJobByType(instance.Status.Jobs, v1alpha1.JobTypeProvision)
-		if latestProvisionJob != nil && !latestProvisionJob.State.IsTerminal() {
-			log.Info("marking provision job as succeeded (config versions match)", "jobID", latestProvisionJob.JobID, "previousState", latestProvisionJob.State)
-			latestProvisionJob.State = v1alpha1.JobStateSucceeded
-			latestProvisionJob.Message = "provision completed (config versions match)"
 		}
 
 		return ctrl.Result{}, nil
@@ -978,9 +959,8 @@ func determinePhaseFromPrintableStatus(ctx context.Context, kv *kubevirtv1.Virtu
 // Returns provisioning.Trigger when provisioning is needed and no in-flight job exists.
 func (r *ComputeInstanceReconciler) provisionState(instance *v1alpha1.ComputeInstance) *provisioning.State {
 	return &provisioning.State{
-		Jobs:                    &instance.Status.Jobs,
-		DesiredConfigVersion:    instance.Status.DesiredConfigVersion,
-		ReconciledConfigVersion: instance.Status.ReconciledConfigVersion,
+		Jobs:                 &instance.Status.Jobs,
+		DesiredConfigVersion: instance.Status.DesiredConfigVersion,
 	}
 }
 
@@ -996,22 +976,5 @@ func (r *ComputeInstanceReconciler) handleDesiredConfigVersion(ctx context.Conte
 		return err
 	}
 	instance.Status.DesiredConfigVersion = version
-	return nil
-}
-
-// handleReconciledConfigVersion copies the annotation osacAAPReconciledConfigVersionAnnotation to status.ReconciledConfigVersion.
-// If the annotation doesn't exist, it clears status.ReconciledConfigVersion.
-func (r *ComputeInstanceReconciler) handleReconciledConfigVersion(ctx context.Context, instance *v1alpha1.ComputeInstance) error {
-	log := ctrllog.FromContext(ctx)
-
-	// Copy the reconciled config version from annotation if it exists
-	if version, exists := instance.Annotations[osacAAPReconciledConfigVersionAnnotation]; exists {
-		instance.Status.ReconciledConfigVersion = version
-		log.V(1).Info("copied reconciled config version from annotation", "version", version)
-	} else {
-		// Clear the reconciled config version if annotation doesn't exist
-		instance.Status.ReconciledConfigVersion = ""
-	}
-
 	return nil
 }

@@ -57,33 +57,25 @@ var _ = ginkgo.Describe("EvaluateAction", func() {
 	apiServerHasJob := func() bool { return true }
 
 	ginkgo.DescribeTable("returns the correct action",
-		func(jobs []v1alpha1.JobStatus, desiredVersion string, reconciledVersion string, checkAPIServer func() bool, expectedAction Action) {
+		func(jobs []v1alpha1.JobStatus, desiredVersion string, checkAPIServer func() bool, expectedAction Action) {
 			state := &State{
-				Jobs:                    &jobs,
-				DesiredConfigVersion:    desiredVersion,
-				ReconciledConfigVersion: reconciledVersion,
+				Jobs:                 &jobs,
+				DesiredConfigVersion: desiredVersion,
 			}
 			action, _ := EvaluateAction(state, checkAPIServer)
 			Expect(action).To(Equal(expectedAction))
 		},
 
-		ginkgo.Entry("no jobs, versions match -> skip",
+		ginkgo.Entry("no jobs -> trigger",
 			[]v1alpha1.JobStatus{},
-			"v1", "v1",
-			noAPIServerJob,
-			Skip,
-		),
-
-		ginkgo.Entry("no jobs, versions differ -> trigger",
-			[]v1alpha1.JobStatus{},
-			"v2", "v1",
+			"v1",
 			noAPIServerJob,
 			Trigger,
 		),
 
-		ginkgo.Entry("no jobs, versions differ, API server has job -> requeue",
+		ginkgo.Entry("no jobs, API server has job -> requeue",
 			[]v1alpha1.JobStatus{},
-			"v2", "v1",
+			"v2",
 			apiServerHasJob,
 			Requeue,
 		),
@@ -92,7 +84,7 @@ var _ = ginkgo.Describe("EvaluateAction", func() {
 			[]v1alpha1.JobStatus{
 				{JobID: "100", Type: v1alpha1.JobTypeProvision, State: v1alpha1.JobStateRunning, Timestamp: metav1.NewTime(time.Now())},
 			},
-			"v1", "",
+			"v1",
 			noAPIServerJob,
 			Poll,
 		),
@@ -101,7 +93,7 @@ var _ = ginkgo.Describe("EvaluateAction", func() {
 			[]v1alpha1.JobStatus{
 				{JobID: "100", Type: v1alpha1.JobTypeProvision, State: v1alpha1.JobStateSucceeded, ConfigVersion: "v1", Timestamp: metav1.NewTime(time.Now())},
 			},
-			"v1", "",
+			"v1",
 			noAPIServerJob,
 			Skip,
 		),
@@ -110,7 +102,7 @@ var _ = ginkgo.Describe("EvaluateAction", func() {
 			[]v1alpha1.JobStatus{
 				{JobID: "100", Type: v1alpha1.JobTypeProvision, State: v1alpha1.JobStateFailed, ConfigVersion: "v1", Timestamp: metav1.NewTime(time.Now())},
 			},
-			"v1", "",
+			"v1",
 			noAPIServerJob,
 			Backoff,
 		),
@@ -119,34 +111,34 @@ var _ = ginkgo.Describe("EvaluateAction", func() {
 			[]v1alpha1.JobStatus{
 				{JobID: "100", Type: v1alpha1.JobTypeProvision, State: v1alpha1.JobStateFailed, ConfigVersion: "v1", Timestamp: metav1.NewTime(time.Now())},
 			},
-			"v2", "",
+			"v2",
 			noAPIServerJob,
 			Trigger,
 		),
 
-		ginkgo.Entry("terminal job without config version, versions match -> skip",
+		ginkgo.Entry("terminal job without config version, succeeded -> skip (legacy)",
 			[]v1alpha1.JobStatus{
 				{JobID: "100", Type: v1alpha1.JobTypeProvision, State: v1alpha1.JobStateSucceeded, Timestamp: metav1.NewTime(time.Now())},
 			},
-			"v1", "v1",
+			"v1",
 			noAPIServerJob,
 			Skip,
 		),
 
-		ginkgo.Entry("terminal job without config version, versions differ -> trigger",
+		ginkgo.Entry("terminal job without config version, failed -> trigger",
 			[]v1alpha1.JobStatus{
-				{JobID: "100", Type: v1alpha1.JobTypeProvision, State: v1alpha1.JobStateSucceeded, Timestamp: metav1.NewTime(time.Now())},
+				{JobID: "100", Type: v1alpha1.JobTypeProvision, State: v1alpha1.JobStateFailed, Timestamp: metav1.NewTime(time.Now())},
 			},
-			"v2", "v1",
+			"v2",
 			noAPIServerJob,
 			Trigger,
 		),
 
-		ginkgo.Entry("job with empty ID (trigger failed) and versions differ -> trigger",
+		ginkgo.Entry("job with empty ID (trigger failed) -> trigger",
 			[]v1alpha1.JobStatus{
 				{JobID: "", Type: v1alpha1.JobTypeProvision, State: v1alpha1.JobStateFailed, Timestamp: metav1.NewTime(time.Now())},
 			},
-			"v2", "v1",
+			"v2",
 			noAPIServerJob,
 			Trigger,
 		),
@@ -172,20 +164,6 @@ var _ = ginkgo.Describe("ComputeDesiredConfigVersion", func() {
 	})
 })
 
-var _ = ginkgo.Describe("SyncReconciledConfigVersion", func() {
-	ginkgo.It("returns the annotation value when present", func() {
-		annotations := map[string]string{"osac.openshift.io/reconciled-config-version": "v1"}
-		Expect(SyncReconciledConfigVersion(ctx, annotations, "osac.openshift.io/reconciled-config-version")).To(Equal("v1"))
-	})
-
-	ginkgo.It("returns empty string when annotation is absent", func() {
-		Expect(SyncReconciledConfigVersion(ctx, map[string]string{}, "osac.openshift.io/reconciled-config-version")).To(BeEmpty())
-	})
-
-	ginkgo.It("returns empty string when annotations map is nil", func() {
-		Expect(SyncReconciledConfigVersion(ctx, nil, "osac.openshift.io/reconciled-config-version")).To(BeEmpty())
-	})
-})
 var _ = ginkgo.Describe("FindLatestJobByType", func() {
 	var baseTime time.Time
 

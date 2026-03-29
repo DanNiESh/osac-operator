@@ -236,11 +236,6 @@ type ComputeInstanceStatus struct {
 	// +kubebuilder:validation:Type=string
 	DesiredConfigVersion string `json:"desiredConfigVersion,omitempty"`
 
-	// ReconciledConfigVersion is the version (hash) of the reconciled configuration of the ComputeInstance
-	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:Type=string
-	ReconciledConfigVersion string `json:"reconciledConfigVersion,omitempty"`
-
 	// LastRestartedAt records when the last restart was initiated by the controller.
 	//
 	// This is set to spec.restartRequestedAt when the controller processes a restart request.

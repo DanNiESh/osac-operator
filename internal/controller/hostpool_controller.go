@@ -251,11 +251,10 @@ func (r *HostPoolReconciler) handleUpdate(ctx context.Context, req reconcile.Req
 		log.Info("component operation completed", "component", comp.name, "result", result)
 	}
 
-	// Compute config version from spec and copy reconciled version from annotation
+	// Compute config version from spec
 	if err := r.handleDesiredConfigVersion(instance); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.handleReconciledConfigVersion(ctx, instance)
 
 	// Handle provisioning via provider
 	provisionResult, err := r.handleProvisioning(ctx, instance)
@@ -274,12 +273,6 @@ func (r *HostPoolReconciler) handleUpdate(ctx context.Context, req reconcile.Req
 		} else if !latestProvisionJob.State.IsTerminal() {
 			instance.SetCondition(v1alpha1.HostPoolConditionProgressing, metav1.ConditionTrue, "ProvisionJobRunning", fmt.Sprintf("Provision job %s is %s", latestProvisionJob.JobID, latestProvisionJob.State))
 		}
-	} else if instance.Status.DesiredConfigVersion == instance.Status.ReconciledConfigVersion {
-		// No provision job and config is up to date — resource is ready
-		instance.SetCondition(v1alpha1.HostPoolConditionProgressing, metav1.ConditionFalse, "HostPoolReady", "HostPool is ready")
-		instance.SetCondition(v1alpha1.HostPoolConditionAvailable, metav1.ConditionTrue, "HostPoolAvailable", "HostPool is available")
-		instance.Status.Phase = v1alpha1.HostPoolPhaseReady
-		instance.Status.HostSets = instance.Spec.HostSets
 	}
 
 	if provisionResult.RequeueAfter > 0 {
@@ -361,9 +354,8 @@ func (r *HostPoolReconciler) handleDelete(ctx context.Context, req reconcile.Req
 
 func (r *HostPoolReconciler) provisionState(instance *v1alpha1.HostPool) *provisioning.State {
 	return &provisioning.State{
-		Jobs:                    &instance.Status.Jobs,
-		DesiredConfigVersion:    instance.Status.DesiredConfigVersion,
-		ReconciledConfigVersion: instance.Status.ReconciledConfigVersion,
+		Jobs:                 &instance.Status.Jobs,
+		DesiredConfigVersion: instance.Status.DesiredConfigVersion,
 	}
 }
 
@@ -415,10 +407,6 @@ func (r *HostPoolReconciler) handleDesiredConfigVersion(instance *v1alpha1.HostP
 	}
 	instance.Status.DesiredConfigVersion = version
 	return nil
-}
-
-func (r *HostPoolReconciler) handleReconciledConfigVersion(ctx context.Context, instance *v1alpha1.HostPool) {
-	instance.Status.ReconciledConfigVersion = provisioning.SyncReconciledConfigVersion(ctx, instance.Annotations, osacReconciledConfigVersionAnnotation)
 }
 
 // handleDeprovisioning manages the deprovisioning job lifecycle for HostPool.

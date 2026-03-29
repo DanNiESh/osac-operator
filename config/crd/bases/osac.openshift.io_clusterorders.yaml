@@ -253,11 +253,6 @@ spec:
                 - Ready
                 - Deleting
                 type: string
-              reconciledConfigVersion:
-                description: |-
-                  ReconciledConfigVersion is the config version that was last successfully applied
-                  by the AAP playbook (copied from the reconciled-config-version annotation).
-                type: string
             type: object
         type: object
     served: true

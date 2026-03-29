@@ -295,11 +295,10 @@ func (r *ClusterOrderReconciler) handleUpdate(ctx context.Context, _ reconcile.R
 
 	instance.SetStatusCondition(v1alpha1.ConditionNamespaceCreated, metav1.ConditionTrue, "", v1alpha1.ReasonAsExpected)
 
-	// Compute config version from spec and copy reconciled version from annotation
+	// Compute config version from spec
 	if err := r.handleDesiredConfigVersion(instance); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.handleReconciledConfigVersion(ctx, instance)
 
 	// Handle provisioning via provider (hybrid approach: job tracking + HC watching)
 	provisionResult, err := r.handleProvisioning(ctx, instance)
@@ -527,9 +526,8 @@ func (r *ClusterOrderReconciler) handleDelete(ctx context.Context, _ reconcile.R
 // Uses shouldTriggerProvision to decide action, with API server read-through guard.
 func (r *ClusterOrderReconciler) provisionState(instance *v1alpha1.ClusterOrder) *provisioning.State {
 	return &provisioning.State{
-		Jobs:                    &instance.Status.Jobs,
-		DesiredConfigVersion:    instance.Status.DesiredConfigVersion,
-		ReconciledConfigVersion: instance.Status.ReconciledConfigVersion,
+		Jobs:                 &instance.Status.Jobs,
+		DesiredConfigVersion: instance.Status.DesiredConfigVersion,
 	}
 }
 
@@ -579,10 +577,6 @@ func (r *ClusterOrderReconciler) handleDesiredConfigVersion(instance *v1alpha1.C
 	}
 	instance.Status.DesiredConfigVersion = version
 	return nil
-}
-
-func (r *ClusterOrderReconciler) handleReconciledConfigVersion(ctx context.Context, instance *v1alpha1.ClusterOrder) {
-	instance.Status.ReconciledConfigVersion = provisioning.SyncReconciledConfigVersion(ctx, instance.Annotations, osacReconciledConfigVersionAnnotation)
 }
 
 // handleDeprovisioning manages the deprovisioning job lifecycle for ClusterOrder.

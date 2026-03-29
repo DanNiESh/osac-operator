@@ -34,12 +34,11 @@ import (
 
 // State points into the resource's status fields used by the provisioning lifecycle.
 // Jobs is a pointer so shared functions can modify the slice in place.
-// DesiredConfigVersion and ReconciledConfigVersion are value snapshots captured at
-// construction time — they are not updated if the instance status changes afterward.
+// DesiredConfigVersion is a value snapshot captured at construction time — it is
+// not updated if the instance status changes afterward.
 type State struct {
-	Jobs                    *[]v1alpha1.JobStatus
-	DesiredConfigVersion    string
-	ReconciledConfigVersion string
+	Jobs                 *[]v1alpha1.JobStatus
+	DesiredConfigVersion string
 }
 
 // GetJobsFromResource extracts the jobs array from a resource.
@@ -62,19 +61,16 @@ func EvaluateAction(provState *State, checkAPIServer func() bool) (Action, *v1al
 	latestJob := FindLatestJobByType(*provState.Jobs, v1alpha1.JobTypeProvision)
 
 	if !HasJobID(latestJob) {
-		if provState.DesiredConfigVersion == provState.ReconciledConfigVersion {
-			return Skip, latestJob
-		}
+		// No provision job exists — trigger one
 	} else if !latestJob.State.IsTerminal() {
 		return Poll, latestJob
-	} else if latestJob.ConfigVersion != "" {
-		if latestJob.ConfigVersion == provState.DesiredConfigVersion {
-			if latestJob.State == v1alpha1.JobStateSucceeded {
-				return Skip, latestJob
-			}
-			return Backoff, latestJob
+	} else if latestJob.ConfigVersion == provState.DesiredConfigVersion {
+		if latestJob.State == v1alpha1.JobStateSucceeded {
+			return Skip, latestJob
 		}
-	} else if provState.DesiredConfigVersion == provState.ReconciledConfigVersion {
+		return Backoff, latestJob
+	} else if latestJob.ConfigVersion == "" && latestJob.State == v1alpha1.JobStateSucceeded {
+		// Legacy job without ConfigVersion that succeeded — skip
 		return Skip, latestJob
 	}
 
@@ -175,6 +171,19 @@ func PollJob(ctx context.Context, provider ProvisioningProvider, resource client
 	return ctrl.Result{}, nil
 }
 
+// IsConfigApplied returns true if the latest provision job succeeded with a ConfigVersion
+// matching the desired version, indicating the current spec has been applied.
+func IsConfigApplied(jobs *[]v1alpha1.JobStatus, desiredConfigVersion string) bool {
+	latestJob := FindLatestJobByType(*jobs, v1alpha1.JobTypeProvision)
+	if latestJob == nil {
+		return false
+	}
+	if latestJob.State != v1alpha1.JobStateSucceeded {
+		return false
+	}
+	return latestJob.ConfigVersion == desiredConfigVersion
+}
+
 // ComputeDesiredConfigVersion computes a hash of the spec and returns it.
 // The caller must pass the resource's Spec field (not the entire resource).
 func ComputeDesiredConfigVersion(spec any) (string, error) {
@@ -187,16 +196,6 @@ func ComputeDesiredConfigVersion(spec any) (string, error) {
 		return "", fmt.Errorf("failed to write to hash: %w", err)
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), nil
-}
-
-// SyncReconciledConfigVersion returns the reconciled config version from the given annotation key, or empty string if not set.
-func SyncReconciledConfigVersion(ctx context.Context, annotations map[string]string, annotationKey string) string {
-	log := ctrllog.FromContext(ctx)
-	if version, exists := annotations[annotationKey]; exists {
-		log.V(1).Info("copied reconciled config version from annotation", "version", version)
-		return version
-	}
-	return ""
 }
 
 // TriggerDeprovisionJob triggers a deprovision job via the provider and handles the result.

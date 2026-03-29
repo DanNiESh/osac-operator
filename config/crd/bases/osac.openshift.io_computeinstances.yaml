@@ -350,10 +350,6 @@ spec:
                 - Stopped
                 - Paused
                 type: string
-              reconciledConfigVersion:
-                description: ReconciledConfigVersion is the version (hash) of the
-                  reconciled configuration of the ComputeInstance
-                type: string
               tenantReference:
                 description: Reference to the tenant that contains the ComputeInstance
                   resources

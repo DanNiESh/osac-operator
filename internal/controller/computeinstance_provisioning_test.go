@@ -109,14 +109,21 @@ var _ = Describe("ComputeInstance Provisioning", func() {
 	})
 
 	Context("handleProvisioning", func() {
-		It("should skip when config versions match", func() {
+		It("should skip when latest job succeeded with matching ConfigVersion", func() {
 			instance.Status.DesiredConfigVersion = "v1"
-			instance.Status.ReconciledConfigVersion = "v1"
+			instance.Status.Jobs = []osacv1alpha1.JobStatus{
+				{
+					JobID:         "completed-job",
+					Type:          osacv1alpha1.JobTypeProvision,
+					Timestamp:     metav1.NewTime(time.Now().UTC()),
+					State:         osacv1alpha1.JobStateSucceeded,
+					ConfigVersion: "v1",
+				},
+			}
 
 			result, err := reconciler.handleProvisioning(ctx, instance)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeZero())
-			Expect(instance.Status.Jobs).To(BeEmpty())
 		})
 
 		It("should trigger provision when no job ID exists", func() {
@@ -227,7 +234,6 @@ var _ = Describe("ComputeInstance Provisioning", func() {
 			latestProvisionJob := provisioning.FindLatestJobByType(instance.Status.Jobs, osacv1alpha1.JobTypeProvision)
 			Expect(latestProvisionJob).NotTo(BeNil())
 			Expect(latestProvisionJob.State).To(Equal(osacv1alpha1.JobStateSucceeded))
-			Expect(instance.Status.ReconciledConfigVersion).To(Equal("v1.2.3"))
 		})
 
 		It("should set phase to Failed when job fails and no VM exists (first-time provisioning)", func() {
@@ -356,7 +362,7 @@ var _ = Describe("ComputeInstance Provisioning", func() {
 	Context("handleDeprovisioning", func() {
 		BeforeEach(func() {
 			// Add finalizer for deletion tests
-			instance.Finalizers = []string{osacAAPComputeInstanceFinalizer}
+			instance.Finalizers = []string{osacComputeInstanceFinalizer}
 		})
 
 		It("should trigger deprovision when no job ID exists", func() {
@@ -438,7 +444,7 @@ var _ = Describe("ComputeInstance Provisioning", func() {
 			Expect(latestDeprovisionJob.State).To(Equal(osacv1alpha1.JobStateRunning))
 			Expect(latestDeprovisionJob.Message).To(Equal("Deprovisioning in progress"))
 			// Finalizer should still be present while job is running
-			Expect(instance.Finalizers).To(ContainElement(osacAAPComputeInstanceFinalizer))
+			Expect(instance.Finalizers).To(ContainElement(osacComputeInstanceFinalizer))
 		})
 
 		It("should handle deprovision status check error", func() {

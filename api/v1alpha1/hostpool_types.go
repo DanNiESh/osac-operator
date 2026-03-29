@@ -108,11 +108,6 @@ type HostPoolStatus struct {
 	// that require re-provisioning.
 	// +kubebuilder:validation:Optional
 	DesiredConfigVersion string `json:"desiredConfigVersion,omitempty"`
-
-	// ReconciledConfigVersion is the config version that was last successfully applied
-	// by the AAP playbook (copied from the reconciled-config-version annotation).
-	// +kubebuilder:validation:Optional
-	ReconciledConfigVersion string `json:"reconciledConfigVersion,omitempty"`
 }
 
 // +kubebuilder:object:root=true
