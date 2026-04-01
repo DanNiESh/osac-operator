@@ -116,8 +116,12 @@ func (r *SubnetReconciler) handleUpdate(ctx context.Context, subnet *v1alpha1.Su
 		}
 	}
 
-	// Set phase to Progressing
-	subnet.Status.Phase = v1alpha1.SubnetPhaseProgressing
+	// Set phase to Progressing only on first reconcile (empty phase).
+	// Subsequent reconciles preserve the current phase — it gets updated
+	// by OnSuccess/OnFailed callbacks in RunProvisioningLifecycle.
+	if subnet.Status.Phase == "" {
+		subnet.Status.Phase = v1alpha1.SubnetPhaseProgressing
+	}
 
 	// Get parent VirtualNetwork by UUID label to read implementation strategy
 	vnetList := &v1alpha1.VirtualNetworkList{}

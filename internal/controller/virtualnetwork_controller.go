@@ -98,8 +98,12 @@ func (r *VirtualNetworkReconciler) handleUpdate(ctx context.Context, vnet *v1alp
 		}
 	}
 
-	// Set phase to Progressing
-	vnet.Status.Phase = v1alpha1.VirtualNetworkPhaseProgressing
+	// Set phase to Progressing only on first reconcile (empty phase).
+	// Subsequent reconciles preserve the current phase — it gets updated
+	// by OnSuccess/OnFailed callbacks in RunProvisioningLifecycle.
+	if vnet.Status.Phase == "" {
+		vnet.Status.Phase = v1alpha1.VirtualNetworkPhaseProgressing
+	}
 
 	// Read implementation strategy from spec (populated by fulfillment-service from NetworkClass)
 	implementationStrategy := vnet.Spec.ImplementationStrategy
