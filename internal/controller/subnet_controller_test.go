@@ -377,6 +377,44 @@ var _ = Describe("SubnetReconciler", func() {
 		})
 	})
 
+	Context("backoff on failure", func() {
+		It("should backoff when latest job failed with matching ConfigVersion", func() {
+			subnet.Status.DesiredConfigVersion = "version-1"
+			subnet.Status.Jobs = []osacv1alpha1.JobStatus{
+				{
+					JobID:         "failed-job",
+					Type:          osacv1alpha1.JobTypeProvision,
+					Timestamp:     metav1.NewTime(time.Now().UTC()),
+					State:         osacv1alpha1.JobStateFailed,
+					Message:       "provision failed",
+					ConfigVersion: "version-1",
+				},
+			}
+
+			result, err := reconciler.handleProvisioning(ctx, subnet)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			Expect(result.RequeueAfter).To(BeNumerically("<=", provisioning.BackoffMaxDelay))
+		})
+
+		It("should skip when config already applied", func() {
+			subnet.Status.DesiredConfigVersion = "version-1"
+			subnet.Status.Jobs = []osacv1alpha1.JobStatus{
+				{
+					JobID:         "succeeded-job",
+					Type:          osacv1alpha1.JobTypeProvision,
+					Timestamp:     metav1.NewTime(time.Now().UTC()),
+					State:         osacv1alpha1.JobStateSucceeded,
+					ConfigVersion: "version-1",
+				},
+			}
+
+			result, err := reconciler.handleProvisioning(ctx, subnet)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Duration(0)))
+		})
+	})
+
 	Context("Job history management", func() {
 		It("should limit job history to MaxJobHistory", func() {
 			reconciler.MaxJobHistory = 3
