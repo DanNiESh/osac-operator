@@ -269,7 +269,7 @@ var _ = Describe("SubnetReconciler", func() {
 		})
 
 		It("should trigger new job when previous job failed", func() {
-			subnet.Status.DesiredConfigVersion = "new-version"
+			subnet.Status.DesiredConfigVersion = testConfigVersionNew
 			subnet.Status.Jobs = []osacv1alpha1.JobStatus{
 				{
 					JobID:         "old-failed-job",
@@ -277,7 +277,7 @@ var _ = Describe("SubnetReconciler", func() {
 					Timestamp:     metav1.NewTime(time.Now().UTC()),
 					State:         osacv1alpha1.JobStateFailed,
 					Message:       "Previous job failed",
-					ConfigVersion: "old-version",
+					ConfigVersion: testConfigVersionOld,
 				},
 			}
 
@@ -379,7 +379,7 @@ var _ = Describe("SubnetReconciler", func() {
 
 	Context("backoff on failure", func() {
 		It("should backoff when latest job failed with matching ConfigVersion", func() {
-			subnet.Status.DesiredConfigVersion = "version-1"
+			subnet.Status.DesiredConfigVersion = testConfigVersion
 			subnet.Status.Jobs = []osacv1alpha1.JobStatus{
 				{
 					JobID:         "failed-job",
@@ -387,7 +387,7 @@ var _ = Describe("SubnetReconciler", func() {
 					Timestamp:     metav1.NewTime(time.Now().UTC()),
 					State:         osacv1alpha1.JobStateFailed,
 					Message:       "provision failed",
-					ConfigVersion: "version-1",
+					ConfigVersion: testConfigVersion,
 				},
 			}
 
@@ -398,14 +398,14 @@ var _ = Describe("SubnetReconciler", func() {
 		})
 
 		It("should skip when config already applied", func() {
-			subnet.Status.DesiredConfigVersion = "version-1"
+			subnet.Status.DesiredConfigVersion = testConfigVersion
 			subnet.Status.Jobs = []osacv1alpha1.JobStatus{
 				{
 					JobID:         "succeeded-job",
 					Type:          osacv1alpha1.JobTypeProvision,
 					Timestamp:     metav1.NewTime(time.Now().UTC()),
 					State:         osacv1alpha1.JobStateSucceeded,
-					ConfigVersion: "version-1",
+					ConfigVersion: testConfigVersion,
 				},
 			}
 

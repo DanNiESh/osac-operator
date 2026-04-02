@@ -35,6 +35,13 @@ import (
 	"github.com/osac-project/osac-operator/internal/provisioning"
 )
 
+const (
+	testConfigVersion        = "version-1"
+	testConfigVersionUpdated = "version-2"
+	testConfigVersionOld     = "old-version"
+	testConfigVersionNew     = "new-version"
+)
+
 var _ = Describe("SecurityGroupReconciler", func() {
 	var (
 		reconciler   *SecurityGroupReconciler
@@ -616,7 +623,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 
 	Context("backoff on failure", func() {
 		It("should backoff when latest job failed with matching ConfigVersion", func() {
-			sg.Status.DesiredConfigVersion = "version-1"
+			sg.Status.DesiredConfigVersion = testConfigVersion
 			sg.Status.Jobs = []osacv1alpha1.JobStatus{
 				{
 					JobID:         "failed-job",
@@ -624,7 +631,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 					Timestamp:     metav1.NewTime(time.Now().UTC()),
 					State:         osacv1alpha1.JobStateFailed,
 					Message:       "provision failed",
-					ConfigVersion: "version-1",
+					ConfigVersion: testConfigVersion,
 				},
 			}
 
@@ -642,7 +649,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 				}, nil
 			}
 
-			sg.Status.DesiredConfigVersion = "version-2"
+			sg.Status.DesiredConfigVersion = testConfigVersionUpdated
 			sg.Status.Jobs = []osacv1alpha1.JobStatus{
 				{
 					JobID:         "failed-job",
@@ -650,7 +657,7 @@ var _ = Describe("SecurityGroupReconciler", func() {
 					Timestamp:     metav1.NewTime(time.Now().UTC()),
 					State:         osacv1alpha1.JobStateFailed,
 					Message:       "provision failed",
-					ConfigVersion: "version-1",
+					ConfigVersion: testConfigVersion,
 				},
 			}
 
@@ -664,14 +671,14 @@ var _ = Describe("SecurityGroupReconciler", func() {
 		})
 
 		It("should skip when config already applied", func() {
-			sg.Status.DesiredConfigVersion = "version-1"
+			sg.Status.DesiredConfigVersion = testConfigVersion
 			sg.Status.Jobs = []osacv1alpha1.JobStatus{
 				{
 					JobID:         "succeeded-job",
 					Type:          osacv1alpha1.JobTypeProvision,
 					Timestamp:     metav1.NewTime(time.Now().UTC()),
 					State:         osacv1alpha1.JobStateSucceeded,
-					ConfigVersion: "version-1",
+					ConfigVersion: testConfigVersion,
 				},
 			}
 

@@ -271,7 +271,7 @@ var _ = Describe("VirtualNetworkReconciler", func() {
 
 	Context("backoff on failure", func() {
 		It("should backoff when latest job failed with matching ConfigVersion", func() {
-			vnet.Status.DesiredConfigVersion = "version-1"
+			vnet.Status.DesiredConfigVersion = testConfigVersion
 			vnet.Status.Jobs = []osacv1alpha1.JobStatus{
 				{
 					JobID:         "failed-job",
@@ -279,7 +279,7 @@ var _ = Describe("VirtualNetworkReconciler", func() {
 					Timestamp:     metav1.NewTime(time.Now().UTC()),
 					State:         osacv1alpha1.JobStateFailed,
 					Message:       "provision failed",
-					ConfigVersion: "version-1",
+					ConfigVersion: testConfigVersion,
 				},
 			}
 
@@ -297,7 +297,7 @@ var _ = Describe("VirtualNetworkReconciler", func() {
 				}, nil
 			}
 
-			vnet.Status.DesiredConfigVersion = "version-2"
+			vnet.Status.DesiredConfigVersion = testConfigVersionUpdated
 			vnet.Status.Jobs = []osacv1alpha1.JobStatus{
 				{
 					JobID:         "failed-job",
@@ -305,7 +305,7 @@ var _ = Describe("VirtualNetworkReconciler", func() {
 					Timestamp:     metav1.NewTime(time.Now().UTC()),
 					State:         osacv1alpha1.JobStateFailed,
 					Message:       "provision failed",
-					ConfigVersion: "version-1",
+					ConfigVersion: testConfigVersion,
 				},
 			}
 
@@ -319,14 +319,14 @@ var _ = Describe("VirtualNetworkReconciler", func() {
 		})
 
 		It("should skip when config already applied", func() {
-			vnet.Status.DesiredConfigVersion = "version-1"
+			vnet.Status.DesiredConfigVersion = testConfigVersion
 			vnet.Status.Jobs = []osacv1alpha1.JobStatus{
 				{
 					JobID:         "succeeded-job",
 					Type:          osacv1alpha1.JobTypeProvision,
 					Timestamp:     metav1.NewTime(time.Now().UTC()),
 					State:         osacv1alpha1.JobStateSucceeded,
-					ConfigVersion: "version-1",
+					ConfigVersion: testConfigVersion,
 				},
 			}
 
